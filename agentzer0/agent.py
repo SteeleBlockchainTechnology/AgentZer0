@@ -1,21 +1,18 @@
-# trademaster/agent.py
+# AgentZer0/agent.py
 import os
 import sys
 import logging
 from dotenv import load_dotenv
 from crewai import Agent, Crew, Process, Task
-from crewai.project import CrewBase, agent, crew, task
-from praisonaiagents.tools import get_stock_price, get_stock_info, get_historical_data
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
-import groq  # Add this line
+import groq
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger('TradeMasterAgent')
+logger = logging.getLogger('AgentZer0')
 
 load_dotenv()
 GROQ_API = os.getenv("GROQ_API_KEY")
@@ -26,19 +23,19 @@ llm = ChatGroq(
     client = groq.Groq(api_key=GROQ_API)
 )
 
-class TradeMasterAgent:
+class AgentZer0:
     def __init__(self):
-        logger.info("Initializing TradeMasterAgent")
+        logger.info("Initializing AgentZer0")
         
         # Define CrewAI agent
         self.agent = Agent(
-            role="Trading Assistant",
-            goal="Provide concise, trading-related answers to messages using the tools provided to you",
-            backstory="You are GridZer0 AI, a knowledgeable AI assistant for the GridZer0 trading community, skilled in fetching stock prices, company info, and historical data.",
+role="Trading Assistant",
+            goal="Provide concise, trading-related answers to messages using the tools provided",
+            backstory="You are AgentZer0, a knowledgeable AI assistant for the GridZer0 trading community, skilled in fetching stock prices, company info, and historical data. You can describe your capabilities when asked.",
             verbose=True,
             llm= llm
         )
-        logger.info("TradeMasterAgent initialized successfully")
+        logger.info("AgentZer0 initialized successfully")
 
     async def process_message(self, message):
         logger.info(f"Processing message: {message.content}")
@@ -48,9 +45,10 @@ class TradeMasterAgent:
             # Define task for the agent
             task = Task(
                 description=f"""
-                Respond to the following Discord message with a concise, trading-related answer: "{text}"
-                Use the stock tools (get_stock_price, get_stock_info, get_historical_data) if the message involves stock queries.
-                Maintain a natural conversation flow.
+                You are a trading assistant. A user has sent the following message: "{text}". 
+                Provide a concise, trading-related response. 
+                - If the message asks about specific stocks or data, use the available tools (get_stock_price, get_stock_info, get_historical_data) to fetch the information. 
+                - If the message is general or about your capabilities, describe what you can do.
                 """,
                 agent=self.agent,
                 expected_output="A concise, trading-related response to the user's message."

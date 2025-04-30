@@ -1,10 +1,10 @@
-# trademaster/bot.py
+# AgentZer0/bot.py
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 import os
 import logging
-from trademaster.agent import TradeMasterAgent
+from agentzer0.agent import AgentZer0
 
 # Configure logging
 if not logging.getLogger().handlers:
@@ -12,7 +12,7 @@ if not logging.getLogger().handlers:
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-logger = logging.getLogger('TrademasterBot')
+logger = logging.getLogger('AgentZer0Bot')
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -25,8 +25,8 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-logger.info("Creating TradeMasterAgent instance")
-agent = TradeMasterAgent()
+logger.info("Creating AgentZer0Agent instance")
+agent = AgentZer0()
 
 @bot.event
 async def on_ready():

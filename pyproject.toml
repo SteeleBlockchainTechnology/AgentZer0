@@ -1,25 +1,27 @@
-# pyproject.toml
-[tool.poetry]
-name = "trademaster"
+[project]
+name = "agentzer0"
 version = "0.1.0"
-description = "A proactive Discord bot for a trading community with PraisonAI and Groq"
-authors = ["You <your.email@example.com>"]
+description = "A proactive Discord bot for a trading community"
+authors = [
+    {name = "Your Name", email = "you@example.com"}
+]
 readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "discord-py>=2.5.2,<3.0.0",
+    "python-dotenv>=1.1.0,<2.0.0",
+    "groq>=0.23.1,<0.24.0",
+    "crewai>=0.118.0,<0.119.0",  # Explicit version range for clarity
+    "langchain-groq (>=0.3.2,<0.4.0)",
+    "mcp-use (>=1.2.8,<2.0.0)"
+]
 
-[tool.poetry.dependencies]
-python = ">=3.10,<3.13"
-discord-py = "^2.3.2"
-python-dotenv = "^1.0.0"
-groq = "^0.23.1"
-pyyaml = "^6.0.2"
-crewai = {extras = ["tools"], version = "^0.117.1"}
-crewai-tools = "^0.42.2"
-praisonaiagents = {extras = ["llm"], version = "^0.0.76"}
-langchain-groq = "^0.3.2"
+[tool.poetry]
+# Empty section, retained for future use if needed
 
 [tool.poetry.group.dev.dependencies]
-pytest = ">=8.0.0,<9.0.0"
+pytest = "^8.3.5"
 
 [build-system]
-requires = ["poetry-core"]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
