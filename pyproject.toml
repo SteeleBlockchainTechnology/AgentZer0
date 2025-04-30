@@ -1,0 +1,25 @@
+# pyproject.toml
+[tool.poetry]
+name = "trademaster"
+version = "0.1.0"
+description = "A proactive Discord bot for a trading community with PraisonAI and Groq"
+authors = ["You <your.email@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.13"
+discord-py = "^2.3.2"
+python-dotenv = "^1.0.0"
+groq = "^0.23.1"
+pyyaml = "^6.0.2"
+crewai = {extras = ["tools"], version = "^0.117.1"}
+crewai-tools = "^0.42.2"
+praisonaiagents = {extras = ["llm"], version = "^0.0.76"}
+langchain-groq = "^0.3.2"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0.0,<9.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
