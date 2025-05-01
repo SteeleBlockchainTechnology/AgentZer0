@@ -10,6 +10,13 @@ venv/
 *.egg-info/
 dist/
 build/
+node_modules/
+yarn.lock
+.pip/
+.pytest_cache/
+.pytest/
+coverage.xml
+
 
 # Poetry
 poetry.lock
