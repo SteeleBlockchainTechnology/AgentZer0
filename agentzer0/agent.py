@@ -1,69 +1,119 @@
-# AgentZer0/agent.py
 import os
-import sys
-import logging
+import subprocess
 from dotenv import load_dotenv
-from crewai import Agent, Crew, Process, Task
 from langchain_groq import ChatGroq
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain.agents import AgentExecutor, create_react_agent
+from langchain.prompts import PromptTemplate
 import groq
+import asyncio
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Minimal logging configuration
+import logging
+logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger('AgentZer0')
 
 load_dotenv()
 GROQ_API = os.getenv("GROQ_API_KEY")
+ANKR_API = os.getenv("ANKR_API_KEY")
+
+# Validate Groq API key
+if not GROQ_API:
+    logger.error("GROQ_API_KEY is not set")
+    raise ValueError("GROQ_API_KEY is required")
+
+# Initialize Groq client and validate model
+groq_client = groq.Groq(api_key=GROQ_API)
+MODEL_NAME = "llama3-70b-8192"
+try:
+    groq_client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[{"role": "user", "content": "test"}],
+        max_tokens=10
+    )
+except Exception as e:
+    logger.error("Failed to validate Groq model: %s", e)
+    raise
+
+# Initialize LLM
 llm = ChatGroq(
-    model="groq/llama3-70b-8192",
+    model=MODEL_NAME,
     temperature=0.5,
     max_tokens=512,
-    client = groq.Groq(api_key=GROQ_API)
+    groq_api_key=GROQ_API
 )
 
 class AgentZer0:
     def __init__(self):
-        logger.info("Initializing AgentZer0")
-        
-        # Define CrewAI agent
-        self.agent = Agent(
-role="Trading Assistant",
-            goal="Provide concise, trading-related answers to messages using the tools provided",
-            backstory="You are AgentZer0, a knowledgeable AI assistant for the GridZer0 trading community, skilled in fetching stock prices, company info, and historical data. You can describe your capabilities when asked.",
-            verbose=True,
-            llm= llm
-        )
-        logger.info("AgentZer0 initialized successfully")
+        # MCP server configuration
+        mcp_config = {
+            "web3-research-mcp": {
+                "command": "node",
+                "args": ["C:/Users/Sturgis/root.s/#SteeleBlockchainTechnology/Projects/GridZer0/AgentZer0_Discord/MCP_Servers/build/index.js"],
+                "env": {"ANKR_API_KEY": ANKR_API} if ANKR_API else {},
+                "transport": "stdio"
+            }
+        }
+
+        # Start MCP server and initialize client
+        try:
+            self.server_process = subprocess.Popen(
+                [mcp_config["web3-research-mcp"]["command"]] + mcp_config["web3-research-mcp"]["args"],
+                env={**os.environ, **mcp_config["web3-research-mcp"]["env"]},
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            self.mcp_client = MultiServerMCPClient(mcp_config)
+            asyncio.run(asyncio.sleep(10))  # Wait for server startup
+            mcp_tools = self.mcp_client.get_tools()
+            tool_names = [tool.name for tool in mcp_tools]
+            if not mcp_tools:
+                logger.error("No tools loaded from MCP server")
+        except Exception as e:
+            logger.error("Failed to initialize MCP server: %s", e)
+            raise
+
+        # Initialize LangChain agent
+        try:
+            prompt = PromptTemplate.from_template(
+                """
+                You are a trading assistant for the GridZer0 trading community.
+                A user has sent: "{query}".
+                Available tools: {tool_names}
+                Tools details: {tools}
+                Use the following scratchpad: {agent_scratchpad}
+                For crypto queries (e.g., price, market cap, wallet balance), use web3-research-mcp tools: token_price, wallet_balance, chain_data.
+                If no tools are available, return: 'No web3-research-mcp tools available.'
+                Provide a concise response.
+                """
+            )
+            agent = create_react_agent(llm=llm, tools=mcp_tools, prompt=prompt)
+            self.agent_executor = AgentExecutor(agent=agent, tools=mcp_tools, max_iterations=30)
+        except Exception as e:
+            logger.error("Failed to initialize agent: %s", e)
+            raise
+
+    def __del__(self):
+        if hasattr(self, 'server_process') and self.server_process.poll() is None:
+            self.server_process.terminate()
+            try:
+                self.server_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.server_process.kill()
 
     async def process_message(self, message):
-        logger.info(f"Processing message: {message.content}")
         text = message.content
+        mcp_tools = self.mcp_client.get_tools()
+        tool_names = [tool.name for tool in mcp_tools]
+        if not any(tool in ['token_price', 'wallet_balance', 'chain_data'] for tool in tool_names):
+            return {"should_respond": True, "response": "No web3-research-mcp tools available."}
 
         try:
-            # Define task for the agent
-            task = Task(
-                description=f"""
-                You are a trading assistant. A user has sent the following message: "{text}". 
-                Provide a concise, trading-related response. 
-                - If the message asks about specific stocks or data, use the available tools (get_stock_price, get_stock_info, get_historical_data) to fetch the information. 
-                - If the message is general or about your capabilities, describe what you can do.
-                """,
-                agent=self.agent,
-                expected_output="A concise, trading-related response to the user's message."
-            )
-
-            # Create and run a Crew with the agent and task
-            crew = Crew(
-                agents=[self.agent],
-                tasks=[task],
-                verbose=True
-            )
-            response = crew.kickoff()
-            
-            logger.info(f"Response generated: {response}")
-            return {"should_respond": True, "response": str(response)}
+            async with asyncio.timeout(30):
+                response = await self.agent_executor.ainvoke({"query": text})
+                return {"should_respond": True, "response": response.get("output", "No response generated")}
+        except asyncio.TimeoutError:
+            return {"should_respond": True, "response": "Web3 server timed out."}
         except Exception as e:
-            logger.error(f"Error processing message: {e}")
-            return {"should_respond": True, "response": "I'm having trouble processing your request. Please try again later."}
+            return {"should_respond": True, "response": f"Error: {str(e)}"}
