@@ -1,74 +1,49 @@
-"""Utility module for converting between different message formats.
-
-This module provides functions to convert between dictionary-based message formats
-and LangChain message objects.
-"""
+"""Utility module for converting between different message formats."""
 
 from typing import List, Dict, Any, Union
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage, BaseMessage
+import logging
 
+logger = logging.getLogger(__name__)
 
 def dict_to_langchain_messages(messages: List[Dict[str, Any]]) -> List[BaseMessage]:
-    """Convert dictionary messages to LangChain message objects.
-    
-    Args:
-        messages: List of dictionary messages with 'role' and 'content' keys
-        
-    Returns:
-        List of LangChain message objects
-    """
+    """Convert dictionary messages to LangChain message objects."""
     langchain_messages = []
     
     for message in messages:
-        if message["role"] == "user":
-            if isinstance(message["content"], str):
-                langchain_messages.append(HumanMessage(content=message["content"]))
-            else:
-                # Handle tool results
-                for content_item in message["content"]:
-                    if content_item.get("type") == "tool_result":
-                        langchain_messages.append(ToolMessage(
-                            content=content_item["content"],
-                            tool_call_id=content_item["tool_use_id"]
-                        ))
-        elif message["role"] == "assistant":
-            if isinstance(message["content"], str):
-                langchain_messages.append(AIMessage(content=message["content"]))
-            else:
-                # For tool calls, the content structure is handled in the response processing
-                langchain_messages.append(AIMessage(content=message["content"]))
-        elif message["role"] == "system":
-            langchain_messages.append(SystemMessage(content=message["content"]))
+        try:
+            if message["role"] == "user":
+                if isinstance(message["content"], str):
+                    langchain_messages.append(HumanMessage(content=message["content"]))
+                elif isinstance(message["content"], list):
+                    # Handle tool results
+                    for content_item in message["content"]:
+                        if content_item.get("type") == "tool_result":
+                            langchain_messages.append(ToolMessage(
+                                content=content_item.get("content", ""),
+                                tool_call_id=content_item.get("tool_use_id", "")
+                            ))
+            elif message["role"] == "assistant":
+                if isinstance(message["content"], str):
+                    langchain_messages.append(AIMessage(content=message["content"]))
+                else:
+                    # Convert content to string if it's not already
+                    try:
+                        content_str = str(message["content"]) if message["content"] else ""
+                        langchain_messages.append(AIMessage(content=content_str))
+                    except Exception as e:
+                        logger.error(f"Error converting assistant message content: {e}")
+                        langchain_messages.append(AIMessage(content=""))
+            elif message["role"] == "system":
+                langchain_messages.append(SystemMessage(content=message["content"]))
+        except Exception as e:
+            logger.error(f"Error converting message: {e}, message: {message}")
+            # Add a default message to prevent errors
+            if message.get("role") == "user":
+                langchain_messages.append(HumanMessage(content=""))
+            elif message.get("role") == "assistant":
+                langchain_messages.append(AIMessage(content=""))
+            elif message.get("role") == "system":
+                langchain_messages.append(SystemMessage(content=""))
             
     return langchain_messages
-
-
-def langchain_to_dict_messages(messages: List[BaseMessage]) -> List[Dict[str, Any]]:
-    """Convert LangChain message objects to dictionary messages.
-    
-    Args:
-        messages: List of LangChain message objects
-        
-    Returns:
-        List of dictionary messages with 'role' and 'content' keys
-    """
-    dict_messages = []
-    
-    for message in messages:
-        if isinstance(message, HumanMessage):
-            dict_messages.append({"role": "user", "content": message.content})
-        elif isinstance(message, AIMessage):
-            dict_messages.append({"role": "assistant", "content": message.content})
-        elif isinstance(message, SystemMessage):
-            dict_messages.append({"role": "system", "content": message.content})
-        elif isinstance(message, ToolMessage):
-            dict_messages.append({
-                "role": "user",
-                "content": [{
-                    "type": "tool_result",
-                    "tool_use_id": message.tool_call_id,
-                    "content": message.content
-                }]
-            })
-            
-    return dict_messages

@@ -1,0 +1,10 @@
+[
+  {
+    "role": "user",
+    "content": "what is the price of btc"
+  },
+  {
+    "role": "assistant",
+    "content": "I'm not sure how to respond to that."
+  }
+]

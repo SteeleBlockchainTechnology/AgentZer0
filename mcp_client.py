@@ -90,63 +90,107 @@ class MCPClient:
             self.logger.error(f"Error getting MCP tools: {e}")
             raise
 
-    # process query
+        # process query
     async def process_query(self, query: str):
         try:
             self.logger.info(f"Processing query: {query}")
             user_message = {"role": "user", "content": query}
             self.messages = [user_message]
 
-            while True:
+            try:
                 response = await self.call_llm()
-
-                # the response is a text message
-                if response.content[0].type == "text" and len(response.content) == 1:
+                
+                # Log the raw response format to help with debugging
+                self.logger.debug(f"LLM Response type: {type(response)}")
+                self.logger.debug(f"LLM Response content type: {type(response.content) if hasattr(response, 'content') else 'No content attribute'}")
+                
+                # Extract content safely
+                if hasattr(response, 'content'):
+                    content = response.content
+                elif hasattr(response, 'message') and hasattr(response.message, 'content'):
+                    content = response.message.content
+                else:
+                    self.logger.warning("Unexpected response format")
+                    content = []
+                    
+                # Handle response safely
+                if isinstance(content, list) and len(content) > 0:
+                    # Handle list content (may contain tool calls)
+                    if hasattr(content[0], 'type') and content[0].type == "text" and len(content) == 1:
+                        # Simple text response
+                        text_content = getattr(content[0], 'text', str(content[0]))
+                        assistant_message = {
+                            "role": "assistant",
+                            "content": text_content,
+                        }
+                        self.messages.append(assistant_message)
+                        await self.log_conversation()
+                        return self.messages
+                    else:
+                        # Tool call or complex response
+                        assistant_message = {
+                            "role": "assistant",
+                            "content": response.to_dict()["content"] if hasattr(response, "to_dict") else content,
+                        }
+                        self.messages.append(assistant_message)
+                        await self.log_conversation()
+                        
+                        # Process any tool calls
+                        for item in content:
+                            tool_type = getattr(item, 'type', None)
+                            if tool_type == "tool_use":
+                                # Process tool call
+                                tool_name = getattr(item, 'name', '')
+                                tool_args = getattr(item, 'input', {})
+                                tool_use_id = getattr(item, 'id', '')
+                                
+                                self.logger.info(f"Calling tool {tool_name} with args {tool_args}")
+                                try:
+                                    result = await self.session.call_tool(tool_name, tool_args)
+                                    self.logger.info(f"Tool {tool_name} result: {str(result)[:100]}...")
+                                    
+                                    # Add tool result to messages
+                                    self.messages.append({
+                                        "role": "user",
+                                        "content": [{
+                                            "type": "tool_result",
+                                            "tool_use_id": tool_use_id,
+                                            "content": result.content if hasattr(result, 'content') else str(result),
+                                        }],
+                                    })
+                                    await self.log_conversation()
+                                except Exception as e:
+                                    self.logger.error(f"Error calling tool {tool_name}: {e}")
+                                    # Add error message as tool result
+                                    self.messages.append({
+                                        "role": "user",
+                                        "content": [{
+                                            "type": "tool_result",
+                                            "tool_use_id": tool_use_id,
+                                            "content": f"Error: {str(e)}",
+                                        }],
+                                    })
+                                    await self.log_conversation()
+                else:
+                    # Handle string content or other format
                     assistant_message = {
                         "role": "assistant",
-                        "content": response.content[0].text,
+                        "content": str(content) if content else "I'm not sure how to respond to that.",
                     }
                     self.messages.append(assistant_message)
                     await self.log_conversation()
-                    break
-
-                # the response is a tool call
-                assistant_message = {
+                    
+                return self.messages
+                
+            except Exception as e:
+                self.logger.error(f"Error processing response: {e}")
+                # Add error message
+                self.messages.append({
                     "role": "assistant",
-                    "content": response.to_dict()["content"],
-                }
-                self.messages.append(assistant_message)
+                    "content": f"I encountered an error while processing your request: {str(e)}",
+                })
                 await self.log_conversation()
-
-                for content in response.content:
-                    if content.type == "tool_use":
-                        tool_name = content.name
-                        tool_args = content.input
-                        tool_use_id = content.id
-                        self.logger.info(
-                            f"Calling tool {tool_name} with args {tool_args}"
-                        )
-                        try:
-                            result = await self.session.call_tool(tool_name, tool_args)
-                            self.logger.info(f"Tool {tool_name} result: {result}...")
-                            self.messages.append(
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {
-                                            "type": "tool_result",
-                                            "tool_use_id": tool_use_id,
-                                            "content": result.content,
-                                        }
-                                    ],
-                                }
-                            )
-                            await self.log_conversation()
-                        except Exception as e:
-                            self.logger.error(f"Error calling tool {tool_name}: {e}")
-                            raise
-
-            return self.messages
+                return self.messages
 
         except Exception as e:
             self.logger.error(f"Error processing query: {e}")
@@ -163,17 +207,15 @@ class MCPClient:
             # Format tools for LangChain using utility function
             langchain_tools = dict_to_langchain_tools(self.tools)
             
+            # Pass messages directly, with tools formatted properly for OpenAI-compatible chat models
             return await self.llm.ainvoke(
-                input={
-                    "messages": langchain_messages,
-                    "tools": langchain_tools,
-                    "max_tokens": 1000
-                }
+                langchain_messages,
+                tools=langchain_tools,
+                max_tokens=1000
             )
         except Exception as e:
             self.logger.error(f"Error calling LLM: {e}")
             raise
-
     # cleanup
     async def cleanup(self):
         try:
