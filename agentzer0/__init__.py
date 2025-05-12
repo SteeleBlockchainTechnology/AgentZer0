@@ -1,2 +1,5 @@
-# trademaster package
-# This file makes the trademaster directory a Python package
+"""
+AgentZer0 - A Discord bot powered by LLM with Model Context Protocol (MCP).
+"""
+
+__version__ = "0.1.0"

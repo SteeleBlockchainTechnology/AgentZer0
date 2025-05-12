@@ -1,31 +1,46 @@
-[project]
-name = "agentzer0"
-version = "0.1.0"
-description = "A proactive Discord bot for a trading community"
-authors = [
-    {name = "Your Name", email = "you@example.com"}
-]
-readme = "README.md"
-requires-python = ">=3.12,<3.13"
-dependencies = [
-    "discord-py>=2.5.2,<3.0.0",
-    "python-dotenv>=1.1.0,<2.0.0",
-    "groq>=0.23.1,<0.24.0",
-    "crewai>=0.118.0,<0.119.0",  # Explicit version range for clarity
-    "langchain-groq (>=0.3.2,<0.4.0)",
-    "fastembed (>=0.6.1,<0.7.0)",
-    "onnxruntime (>=1.21.1,<2.0.0)",
-    "langchain-mcp-adapters (>=0.0.9,<0.0.10)",
-    "langchain (>=0.3.24,<0.4.0)",
-    "langgraph (>=0.4.1,<0.5.0)"
-]
-
 [tool.poetry]
-# Empty section, retained for future use if needed
+name = "AgentZer0"
+version = "0.1.0"
+description = "A Discord bot that uses an LLM with the Model Context Protocol (MCP)"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+packages = [{include = "AgentZer0"}]
+
+[tool.poetry.dependencies]
+python = "^3.8.1"
+discord-py = "^2.3.0"
+python-dotenv = "^1.0.0"
+aiohttp = "^3.8.5"
+groq = "^0.4.0"
+ujson = "^5.7.0"
+pynacl = {version = "^1.5.0", optional = true}
+httpx = "0.27.2"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.3.5"
+pytest = "^7.3.1"
+black = "^23.3.0"
+isort = "^5.12.0"
+flake8 = "^6.0.0"
+pytest-asyncio = "^0.21.0"
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
+requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+start = "discord_mcp_bot.main:main"
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+asyncio_mode = "auto"
