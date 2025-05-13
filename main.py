@@ -1,131 +1,96 @@
+# ============================================================================
+# MAIN APPLICATION ENTRY POINT
+# ============================================================================
+# This file serves as the entry point for the AgentZer0 application.
+# It initializes the FastAPI application, sets up the MCP client connection,
+# configures middleware, and includes the API routes.
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Dict, Any
 from contextlib import asynccontextmanager
-from mcp_client import MCPClient
-from dotenv import load_dotenv
-from pydantic_settings import BaseSettings
-import os
-import asyncio
-import threading
-from discord_bot import DiscordBot
-from discord_bot.events import MessageHandler
 
-load_dotenv()
+# Import application components
+from client.mcp_client import MCPClient  # Client for MCP server communication
+from config.settings import settings      # Application settings
+from api.routes import router             # API route definitions
 
-
-class Settings(BaseSettings):
-    server_script_path: str = "npx"
-    server_script_args: list[str] = ["-y", "web3-research-mcp@latest"]
-    discord_token: str = os.getenv("DISCORD_TOKEN", "")
-    discord_prefix: str = os.getenv("DISCORD_PREFIX", "!")
-
-
-settings = Settings()
-
-
-# Discord bot instance
-discord_bot = None
-discord_thread = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global discord_bot, discord_thread
+    """Application lifespan manager
+    
+    This context manager handles the lifecycle of the MCP client:
+    1. Initializes the MCP client and connects to the server on startup
+    2. Stores the client in the app state for use by API routes
+    3. Cleans up the client connection on shutdown
+    
+    Args:
+        app: The FastAPI application instance
+        
+    Yields:
+        None: Control is yielded back to FastAPI during application runtime
+        
+    Raises:
+        HTTPException: If connection to the MCP server fails
+    """
     client = MCPClient()
     try:
-        # Connect to MCP server
-        connected = await client.connect_to_server(settings.server_script_path, settings.server_script_args)
+        # Connect to the MCP server using the path from settings
+        connected = await client.connect_to_server(settings.server_script_path)
         if not connected:
             raise HTTPException(
                 status_code=500, detail="Failed to connect to MCP server"
             )
+        # Store client in app state for dependency injection in routes
         app.state.client = client
-        
-        # Initialize Discord bot if token is available
-        if settings.discord_token:
-            discord_bot = DiscordBot(settings.discord_token, settings.discord_prefix)
-            
-            # Set up message handler
-            message_handler = MessageHandler(client)
-            discord_bot.add_message_handler(message_handler.handle_message)
-            
-            # Set up bot events
-            await discord_bot.setup_events()
-            
-            # Start Discord bot in a separate thread
-            discord_thread = threading.Thread(target=discord_bot.run)
-            discord_thread.daemon = True
-            discord_thread.start()
-        else:
-            print("Discord token not found. Discord bot will not be started.")
-        
         yield
     except Exception as e:
         print(f"Error during lifespan: {e}")
         raise HTTPException(status_code=500, detail="Error during lifespan") from e
     finally:
-        # shutdown
+        # Ensure client is properly cleaned up on application shutdown
         await client.cleanup()
 
 
-app = FastAPI(title="MCP Client API", lifespan=lifespan)
+def create_application() -> FastAPI:
+    """Create and configure the FastAPI application
+    
+    This function:
+    1. Creates a new FastAPI instance with the lifespan manager
+    2. Configures CORS middleware to allow cross-origin requests
+    3. Includes the API routes from the router
+    
+    Returns:
+        FastAPI: The configured FastAPI application
+    """
+    app = FastAPI(
+        title="MCP Client API", 
+        lifespan=lifespan,
+        description="API for interacting with the MCP server and LLM"
+    )
+    
+    # Add CORS middleware to allow cross-origin requests
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Allows all origins
+        allow_credentials=True,
+        allow_methods=["*"],  # Allows all methods
+        allow_headers=["*"],  # Allows all headers
+    )
+    
+    # Include API routes defined in api/routes.py
+    app.include_router(router)
+    
+    return app
 
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
-    allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
-)
+# Create the FastAPI application instance
+app = create_application()
 
 
-class QueryRequest(BaseModel):
-    query: str
-
-
-class Message(BaseModel):
-    role: str
-    content: Any
-
-
-class ToolCall(BaseModel):
-    name: str
-    args: Dict[str, Any]
-
-
-@app.post("/query")
-async def process_query(request: QueryRequest):
-    """Process a query and return the response"""
-    try:
-        messages = await app.state.client.process_query(request.query)
-        return {"messages": messages}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/tools")
-async def get_tools():
-    """Get the list of available tools"""
-    try:
-        tools = await app.state.client.get_mcp_tools()
-        return {
-            "tools": [
-                {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "input_schema": tool.inputSchema,
-                }
-                for tool in tools
-            ]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
+# Run the application when executed directly
 if __name__ == "__main__":
     import uvicorn
 
+    # Start the uvicorn server
     uvicorn.run(app, host="0.0.0.0", port=8000)
