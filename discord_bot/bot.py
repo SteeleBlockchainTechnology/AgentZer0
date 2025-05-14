@@ -10,10 +10,10 @@ import asyncio
 from typing import Optional, List, Dict, Any
 
 # Discord.py library for Discord API integration
-import discord
-from discord.ext import commands
+import discord  # This imports the discord.py package
+from discord.ext import commands  # This imports from the discord.py package
 
-# Import Discord modules
+# Import Discord modules (these are local to your project)
 from . import commands as cmd_module
 from . import events as event_module
 

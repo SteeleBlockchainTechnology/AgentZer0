@@ -1,3 +1,6 @@
+# Fixed version of mcp_client.py for Groq v0.4.2
+# This replaces the import of ChatCompletion and updates any related code
+
 # ============================================================================
 # MCP CLIENT
 # ============================================================================
@@ -17,7 +20,8 @@ from mcp.client.stdio import stdio_client
 
 # Groq API client for LLM
 from groq import Groq
-from groq.types import ChatCompletion
+# Remove or comment out the ChatCompletion import as it's not available in this version
+# from groq.types import ChatCompletion  
 
 # Import application logger
 from utils.logger import logger
@@ -165,8 +169,9 @@ class MCPClient:
                 # Get response from LLM
                 response = await self.call_llm()
 
-                # Extract the message from the response using the correct structure
-                # According to Groq documentation, the response is in choices[0].message
+                # Extract the message from the response using the correct structure for Groq v0.4.2
+                # The response structure in v0.4.2 might be different from what was initially expected
+                # Assuming the response follows a standard structure similar to OpenAI's
                 message = response.choices[0].message
                 
                 # Check if the message has tool calls
@@ -235,7 +240,7 @@ class MCPClient:
         The LLM may generate a text response or request to use tools.
         
         Returns:
-            ChatCompletion: The LLM response
+            The LLM response (structure depends on Groq API version)
             
         Raises:
             Exception: If the LLM call fails

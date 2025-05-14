@@ -15,7 +15,7 @@ import os
 from client.mcp_client import MCPClient  # Client for MCP server communication
 from config.settings import settings      # Application settings
 from api.routes import router             # API route definitions
-from discord.bot import DiscordBot        # Discord bot integration
+from discord_bot.bot import DiscordBot        # Discord bot integration
 
 
 @asynccontextmanager
