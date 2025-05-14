@@ -1,11 +1,6 @@
-# ============================================================================
-# LANGUAGE MODEL CLIENT WITH EMPTY RESPONSE FIX
-# ============================================================================
-# This file implements the client for interacting with the Groq LLM with specific
-# handling for empty responses and direct function calls.
-
 import os
 import json
+import re
 from typing import List, Dict, Any, Optional
 
 # Groq API client for LLM
@@ -68,13 +63,41 @@ class LanguageModelClient:
                 }
                 messages.insert(0, system_message)
             else:
-                # Update existing system message to include function call examples
+                # Ensure system message emphasizes the function call format
+                for i, msg in enumerate(messages):
+                    if msg.get("role") == "system" and "<function=" not in msg.get("content", ""):
+                        messages[i]["content"] = (
+                            "You are a helpful assistant with expertise in cryptocurrency research. "
+                            "You have access to web3-research-mcp tools that can help you gather information "
+                            "about various cryptocurrency tokens, market data, and blockchain projects. "
+                            "To use tools, format your response like this: <function=tool_name{\"param\":\"value\"}>. "
+                            "For example, to search for bitcoin price, use: <function=search{\"query\":\"bitcoin price\",\"searchType\":\"web\"}>. "
+                            "Always include explanatory text along with any function calls."
+                        )
+                        break
+            
+            # Check if last few messages were about tools and crypto prices/info
+            # If so, encourage function calls more explicitly
+            should_encourage_tools = False
+            if len(messages) >= 3:
+                last_user_msg = None
+                for msg in reversed(messages):
+                    if msg.get("role") == "user":
+                        last_user_msg = msg.get("content", "").lower()
+                        break
+                
+                if last_user_msg and any(term in last_user_msg for term in 
+                                      ["price", "bitcoin", "btc", "eth", "crypto", "token", "coin"]):
+                    should_encourage_tools = True
+            
+            if should_encourage_tools:
+                # Add a reminder to use function calls if appropriate
                 for i, msg in enumerate(messages):
                     if msg.get("role") == "system":
                         messages[i]["content"] += (
-                            " To use tools, format your response like this: <function=tool_name{\"param\":\"value\"}>. "
-                            "For example, to search for bitcoin price, use: <function=search{\"query\":\"bitcoin price\",\"searchType\":\"web\"}>. "
-                            "Always include explanatory text along with any function calls."
+                            " For queries about cryptocurrency prices or market data, "
+                            "please use the search tool or other available tools to get real-time information. "
+                            "Always use <function=tool_name{...}> syntax when appropriate."
                         )
                         break
             
@@ -89,49 +112,22 @@ class LanguageModelClient:
                 "temperature": 0.7,
             }
             
-            # Add tools if provided
-            if tools:
-                # Make sure tools are properly formatted for the API
-                validated_tools = self._validate_tools(tools)
-                if validated_tools:
-                    self.logger.info(f"Using {len(validated_tools)} tools")
-                    params["tools"] = validated_tools
-                    # Use 'auto' to let the model decide whether to use tools
-                    params["tool_choice"] = "auto"
-                    
-                    # Log the first tool for debugging
-                    if validated_tools:
-                        self.logger.info(f"First tool format: {json.dumps(validated_tools[0], indent=2)}")
+            # Explicitly do NOT add tools parameter to the API call
+            # Instead, we'll rely on the function call format in the prompt
             
             # Call the Groq API
             response = self.llm.chat.completions.create(**params)
             
-            # Check for empty response and handle it
-            if (response.choices[0].message.content is None or 
+            # Log a warning if we get an empty response but don't modify it
+            if (not response.choices[0].message.content or 
                 response.choices[0].message.content.strip() == ""):
-                self.logger.warning("Received empty response from LLM, inserting direct function call")
-                
-                # Create a direct function call response for common queries
-                query_lower = messages[-1]["content"].lower()
-                if "price" in query_lower and ("btc" in query_lower or "bitcoin" in query_lower):
-                    # Special handling for BTC price query
-                    response.choices[0].message.content = (
-                        "I'll find the current Bitcoin price for you. "
-                        "<function=search{\"query\":\"current bitcoin price\",\"searchType\":\"web\"}>"
-                    )
-                elif "price" in query_lower and any(coin in query_lower for coin in ["eth", "ethereum"]):
-                    # Special handling for ETH price query
-                    response.choices[0].message.content = (
-                        "I'll find the current Ethereum price for you. "
-                        "<function=search{\"query\":\"current ethereum price\",\"searchType\":\"web\"}>"
-                    )
-                else:
-                    # Generic search for other queries
-                    search_query = messages[-1]["content"]
-                    response.choices[0].message.content = (
-                        f"I'll search for information about that. "
-                        f"<function=search{{\"query\":\"{search_query}\",\"searchType\":\"web\"}}>"
-                    )
+                self.logger.warning("Received empty response from LLM. This may indicate an issue with the model or the prompt.")
+            
+            # Check if response contains function call format
+            content = response.choices[0].message.content or ""
+            if "<function=" not in content and should_encourage_tools:
+                # If expected to use tools but didn't, log a warning
+                self.logger.warning("LLM response did not include function calls despite the topic being appropriate for tools.")
             
             # Log the response for debugging
             self.logger.info(f"LLM response: {response.choices[0].message.content}")
@@ -142,80 +138,3 @@ class LanguageModelClient:
             self.logger.error(f"Error calling LLM: {e}")
             self.logger.exception("Exception details:")
             raise
-            
-    def _validate_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Validate and format tools for the Groq API
-        
-        Ensures that tools have the correct format required by the API.
-        
-        Args:
-            tools: List of tools to validate
-            
-        Returns:
-            List of validated and formatted tools
-        """
-        validated_tools = []
-        
-        # Handle empty tools list
-        if not tools:
-            # Create a dummy search tool if no tools are available
-            dummy_tool = {
-                "type": "function",
-                "function": {
-                    "name": "search",
-                    "description": "Search for information on the web",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "The search query"
-                            }
-                        },
-                        "required": ["query"]
-                    }
-                }
-            }
-            return [dummy_tool]
-        
-        # Process each tool
-        for tool in tools:
-            try:
-                # Check if the tool already has the correct format
-                if "type" in tool and tool["type"] == "function" and "function" in tool:
-                    # Tool is already in the correct format
-                    validated_tool = tool
-                else:
-                    # Tool needs to be converted to the correct format
-                    name = tool.get("name", "unknown_tool")
-                    
-                    # Ensure description is not null
-                    description = tool.get("description")
-                    if not description:
-                        description = f"Tool for {name.replace('-', ' ')}"
-                    
-                    # Ensure parameters are valid
-                    parameters = tool.get("inputSchema") or tool.get("parameters") or {
-                        "type": "object", 
-                        "properties": {},
-                        "required": []
-                    }
-                    
-                    # Create properly formatted tool
-                    validated_tool = {
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "description": description,
-                            "parameters": parameters
-                        }
-                    }
-                
-                # Add the validated tool to the list
-                validated_tools.append(validated_tool)
-            except Exception as e:
-                self.logger.error(f"Error validating tool {tool.get('name', 'unknown')}: {e}")
-                # Skip invalid tools
-                continue
-            
-        return validated_tools

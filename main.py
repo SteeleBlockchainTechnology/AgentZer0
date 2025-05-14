@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
         # Connect to the web3-research-mcp server using npx
         print("Connecting to web3-research-mcp server...")
         try:
-            # We're ignoring the server_script_path parameter since we're using npx
+            # Call connect_to_server without parameters to use settings from config
             connected = await client.connect_to_server()
             if not connected:
                 print("Failed to connect to web3-research-mcp server")
@@ -83,7 +83,8 @@ async def lifespan(app: FastAPI):
     finally:
         # Ensure client is properly cleaned up on application shutdown
         print("Cleaning up resources...")
-        await client.cleanup()
+        if client:
+            await client.cleanup()
         
         # Clean up Discord bot if it was started
         if discord_bot:

@@ -3,12 +3,12 @@
 # ============================================================================
 # This file defines the event handlers for the Discord bot.
 # It provides a structured way to organize and process Discord events.
-# UPDATED with direct fix for response handling
 
 import discord
 from discord.ext import commands
 import re
 import json
+import asyncio
 from typing import Optional, List, Dict, Any
 
 # Import application components
@@ -35,6 +35,9 @@ class EventHandler:
         
         # Store channels where the bot is actively conversing
         self.active_channels = set()
+        
+        # Track conversations in progress to avoid duplicate processing
+        self.processing_queries = set()
         
         # Register event handlers
         self._register_events()
@@ -71,48 +74,73 @@ class EventHandler:
                 self.bot.user.name.lower() in message.content.lower()  # Optional: comment this line if you don't want name triggers
             )
             
-            if should_respond:
-                # If the message mentions the bot, remove the mention from the message content
-                query = message.content
-                if is_mention:
-                    query = query.replace(f"<@{self.bot.user.id}>", "").strip()
+            # Create a unique ID for this message to avoid processing duplicates
+            message_id = f"{message.channel.id}_{message.id}"
+            
+            if should_respond and message_id not in self.processing_queries:
+                # Add to processing set
+                self.processing_queries.add(message_id)
                 
-                # Add this channel to active channels
-                self.active_channels.add(message.channel.id)
-                
-                # Send typing indicator to show bot is processing
-                async with message.channel.typing():
-                    try:
+                try:
+                    # If the message mentions the bot, remove the mention from the message content
+                    query = message.content
+                    if is_mention:
+                        query = query.replace(f"<@{self.bot.user.id}>", "").strip()
+                    
+                    # Add this channel to active channels
+                    self.active_channels.add(message.channel.id)
+                    
+                    # Send typing indicator to show bot is processing
+                    async with message.channel.typing():
                         # Process the query through MCP client
                         self.logger.info(f"Processing Discord query: {query}")
+                        
+                        # Process query and get response
                         messages = await self.mcp_client.process_query(query)
                         
-                        # Find the most recent assistant message
+                        # Get the last assistant message
                         assistant_response = self._get_latest_assistant_message(messages)
                         
-                        # Prepare a readable response
-                        readable_response = self._prepare_readable_response(assistant_response)
-                        
-                        # Send the response
-                        if readable_response:
-                            # Split long messages if needed (Discord has 2000 char limit)
-                            if len(readable_response) <= 2000:
-                                await message.reply(readable_response)
-                            else:
-                                # Split into chunks of 2000 chars
-                                chunks = [readable_response[i:i+2000] for i in range(0, len(readable_response), 2000)]
-                                for i, chunk in enumerate(chunks):
-                                    # First chunk gets a reply, others are sent as messages
-                                    if i == 0:
-                                        await message.reply(chunk)
-                                    else:
-                                        await message.channel.send(chunk)
+                        # Check if function call is in progress
+                        if "<function=" in assistant_response:
+                            # If function call is in progress, tell the user we're working on it
+                            interim_message = await message.reply("I'm using my tools to find information for you. Please wait a moment...")
+                            
+                            # Wait for a moment to allow tools to complete
+                            await asyncio.sleep(1)
+                            
+                            # Process the query again to get the final result after tool usage
+                            messages = await self.mcp_client.process_query(query)
+                            
+                            # Get the updated response
+                            assistant_response = self._get_latest_assistant_message(messages)
+                            
+                            # Edit the interim message with the final response
+                            await interim_message.edit(content=assistant_response)
                         else:
-                            # Fallback message if no response was found
-                            await message.reply("I'm sorry, I'm having trouble processing that request. Could you try asking in a different way?")
-                    except Exception as e:
-                        self.logger.error(f"Error processing Discord query: {e}")
-                        await message.reply("Sorry, I encountered an error while processing your request.")
+                            # Send the response directly
+                            if assistant_response:
+                                # Split long messages if needed (Discord has 2000 char limit)
+                                if len(assistant_response) <= 2000:
+                                    await message.reply(assistant_response)
+                                else:
+                                    # Split into chunks of 2000 chars
+                                    chunks = [assistant_response[i:i+2000] for i in range(0, len(assistant_response), 2000)]
+                                    for i, chunk in enumerate(chunks):
+                                        # First chunk gets a reply, others are sent as messages
+                                        if i == 0:
+                                            await message.reply(chunk)
+                                        else:
+                                            await message.channel.send(chunk)
+                            else:
+                                # Fallback message if no response was found
+                                await message.reply("I'm sorry, I'm having trouble processing that request. Could you try asking in a different way?")
+                except Exception as e:
+                    self.logger.error(f"Error processing Discord query: {e}")
+                    await message.reply("Sorry, I encountered an error while processing your request.")
+                finally:
+                    # Remove from processing set
+                    self.processing_queries.discard(message_id)
         
         # Register on_ready event
         @self.bot.event
@@ -122,7 +150,7 @@ class EventHandler:
             await self.bot.change_presence(
                 activity=discord.Activity(
                     type=discord.ActivityType.listening, 
-                    name="your questions"
+                    name="crypto questions"
                 )
             )
     
@@ -140,58 +168,6 @@ class EventHandler:
             if msg.get("role") == "assistant" and isinstance(msg.get("content"), str):
                 return msg.get("content", "")
         return ""
-    
-    def _prepare_readable_response(self, content: str) -> str:
-        """Convert an assistant message to a readable response
-        
-        This handles special formats like function calls and ensures a readable response.
-        
-        Args:
-            content: The raw content from the assistant message
-            
-        Returns:
-            str: A human-readable response
-        """
-        if not content:
-            return "I'm sorry, I don't have a response for that query."
-
-        # Check if content is a JSON string of messages (common error pattern)
-        if content.strip().startswith("[") and content.strip().endswith("]"):
-            try:
-                # Try to parse as JSON
-                json_content = json.loads(content)
-                
-                # If it's a list of messages, extract the assistant message
-                if isinstance(json_content, list):
-                    for msg in reversed(json_content):
-                        if msg.get("role") == "assistant" and isinstance(msg.get("content"), str):
-                            content = msg.get("content", "")
-                            break
-            except:
-                # If parsing fails, keep original content
-                pass
-        
-        # Replace function call syntax with readable text
-        function_pattern = r'<function=(\w+)(?:\{(.*?)\})?(?:>.*?</function>|>)'
-        
-        def replace_function(match):
-            func_name = match.group(1)
-            params_json = match.group(2) if match.group(2) else "{}"
-            
-            try:
-                params = json.loads(params_json)
-                if func_name == "search":
-                    query = params.get("query", "information")
-                    return f"I'm searching for information about '{query}'. Please wait a moment..."
-                else:
-                    return f"I'm using my {func_name.replace('-', ' ')} tool to gather information for you. Please wait a moment..."
-            except:
-                return f"I'm using my {func_name.replace('-', ' ')} tool to gather information for you. Please wait a moment..."
-        
-        processed_content = re.sub(function_pattern, replace_function, content)
-        
-        # Return the processed content
-        return processed_content
 
 
 def setup(bot, mcp_client: MCPClient):

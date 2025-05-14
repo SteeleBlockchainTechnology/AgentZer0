@@ -3,6 +3,7 @@ from contextlib import AsyncExitStack
 import traceback
 import json
 import os
+import re
 from datetime import datetime
 
 # Import application components
@@ -35,29 +36,43 @@ class MCPClient:
             self.logger.warning("GROQ_API_KEY environment variable is not set")
         self.llm = LanguageModelClient(api_key=self.api_key)
 
-    async def connect_to_server(self, server_script_path: str) -> bool:
+    async def connect_to_server(self, server_script_path: Optional[str] = None) -> bool:
         """Connect to the MCP server.
         
         Args:
-            server_script_path: Path to the MCP server script (.py or .js)
+            server_script_path: Optional path to the MCP server script (.py or .js)
+                               If not provided, will use settings from config
             
         Returns:
             bool: True if connection was successful, False otherwise
         """
         try:
-            # Validate server script extension
-            is_python = server_script_path.endswith(".py")
-            is_js = server_script_path.endswith(".js")
-            if not (is_python or is_js):
-                raise ValueError("Server script must be a .py or .js file")
-
-            # Set up command based on script type
-            command = "python" if is_python else "node"
-            server_params = StdioServerParameters(
-                command=command, args=[server_script_path], env=None
-            )
-
-            self.logger.info(f"Starting MCP server with: {command} {server_script_path}")
+            # If no script path provided, use the settings to run web3-research-mcp via npx
+            if not server_script_path:
+                # Get configuration from settings
+                command = settings.mcp_command  # Should be "npx"
+                args = settings.mcp_args       # Should be ["-y", "web3-research-mcp@latest"]
+                
+                self.logger.info(f"Starting MCP server with: {command} {' '.join(args)}")
+                
+                # Set up server parameters for npx command
+                server_params = StdioServerParameters(
+                    command=command, args=args, env=None
+                )
+            else:
+                # Use the provided script path (backward compatibility)
+                is_python = server_script_path.endswith(".py")
+                is_js = server_script_path.endswith(".js")
+                if not (is_python or is_js):
+                    raise ValueError("Server script must be a .py or .js file")
+                
+                # Set up command based on script type
+                command = "python" if is_python else "node"
+                self.logger.info(f"Starting MCP server with: {command} {server_script_path}")
+                
+                server_params = StdioServerParameters(
+                    command=command, args=[server_script_path], env=None
+                )
 
             # Establish connection
             stdio_transport = await self.exit_stack.enter_async_context(
@@ -77,12 +92,22 @@ class MCPClient:
                 {
                     "name": tool.name,
                     "description": tool.description or f"Tool for {tool.name.replace('-', ' ')}",
-                    "inputSchema": tool.inputSchema,
+                    "input_schema": tool.inputSchema,
                 }
                 for tool in mcp_tools
             ]
-            self.logger.info(f"Available tools: {[tool['name'] for tool in self.tools]}")
-
+            
+            # Log available tools clearly
+            tool_names = [tool["name"] for tool in self.tools]
+            self.logger.info(f"Available tools: {tool_names}")
+            
+            # Print detailed tool information for debugging
+            for tool in self.tools:
+                self.logger.info(f"Tool '{tool['name']}' details:")
+                self.logger.info(f"  Description: {tool['description']}")
+                if tool.get('input_schema'):
+                    self.logger.info(f"  Input schema: {json.dumps(tool['input_schema'], indent=2)[:200]}...")
+            
             return True
 
         except Exception as e:
@@ -107,6 +132,8 @@ class MCPClient:
         """Process a user query.
         
         Sends query to Groq LLM, processes tool calls, and returns conversation messages.
+        Instead of using the Groq tool_calls format, this will parse function-like syntax
+        in the format: <function=tool_name{"param":"value"}>
         
         Args:
             query: The user's query text
@@ -116,76 +143,95 @@ class MCPClient:
         """
         try:
             self.logger.info(f"Processing query: {query}")
+            
+            # Get list of available tool names
+            available_tool_names = [tool["name"] for tool in self.tools]
+            available_tools_str = ", ".join(f"`{name}`" for name in available_tool_names)
+            
             # Initialize conversation with system and user messages
             system_message = {
                 "role": "system",
                 "content": (
                     "You are a helpful assistant with expertise in cryptocurrency research. "
-                    "You have access to web3-research-mcp tools to gather information about "
-                    "cryptocurrency tokens, market data, and blockchain projects."
+                    f"You have access to the following web3-research-mcp tools: {available_tools_str}. "
+                    "These tools can help you gather information about cryptocurrency tokens, market data, and blockchain projects. "
+                    "To use tools, format your response like this: <function=tool_name{\"param\":\"value\"}>. "
+                    "For example, to search for bitcoin price, use: <function=search{\"query\":\"bitcoin price\",\"searchType\":\"web\"}>. "
+                    "Always include explanatory text along with any function calls. "
+                    f"IMPORTANT: ONLY use the specific tool names listed above: {available_tools_str}. "
+                    "Do not invent or try to use tools that aren't in this list."
                 ),
             }
             user_message = {"role": "user", "content": query}
             self.messages = [system_message, user_message]
 
+            # Start conversation loop
             while True:
-                response = await self.call_llm()
-
-                # Handle text response (no tool calls)
-                if not hasattr(response.choices[0].message, "tool_calls") or not response.choices[0].message.tool_calls:
+                # Call LLM for response
+                response = await self.llm.generate_completion(
+                    messages=self.messages,
+                    tools=self.tools
+                )
+                
+                # Extract content from response
+                assistant_content = response.choices[0].message.content or ""
+                
+                # Check if the response contains function calls
+                function_pattern = r'<function=(\w+)\{(.*?)\}>'
+                function_matches = re.findall(function_pattern, assistant_content)
+                
+                # If no function calls are found, add the assistant message and break
+                if not function_matches:
                     assistant_message = {
                         "role": "assistant",
-                        "content": response.choices[0].message.content or "",
+                        "content": assistant_content,
                     }
                     self.messages.append(assistant_message)
                     await self.log_conversation()
                     break
-
-                # Handle tool calls
-                message = response.choices[0].message
+                
+                # Add the assistant message with the function call
                 assistant_message = {
                     "role": "assistant",
-                    "content": message.content or "",
-                    "tool_calls": [
-                        {
-                            "id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "arguments": json.loads(tool_call.function.arguments),
-                        }
-                        for tool_call in message.tool_calls
-                    ],
+                    "content": assistant_content,
                 }
                 self.messages.append(assistant_message)
                 await self.log_conversation()
-
-                # Process each tool call
-                for tool_call in message.tool_calls:
-                    tool_name = tool_call.function.name
-                    tool_args = json.loads(tool_call.function.arguments)
-                    tool_use_id = tool_call.id
-                    self.logger.info(f"Calling tool {tool_name} with args {tool_args}")
-
+                
+                # Process each function call
+                for tool_name, tool_args_str in function_matches:
+                    self.logger.info(f"Found function call: {tool_name} with args {tool_args_str}")
+                    
                     try:
+                        # Parse the JSON arguments - ensure proper formatting
+                        # Wrap in curly braces if not already present
+                        if not tool_args_str.strip().startswith('{'):
+                            tool_args_str = '{' + tool_args_str + '}'
+                        
+                        tool_args = json.loads(tool_args_str)
+                        
+                        # Call the tool
+                        self.logger.info(f"Calling tool {tool_name} with args {tool_args}")
                         result = await self.session.call_tool(tool_name, tool_args)
+                        
+                        # Format tool result
                         content = self._format_tool_result(result.content)
-                        self.logger.info(f"Tool {tool_name} result: {content[:100]}...")
-                        self.messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_use_id,
-                                "content": content,
-                            }
-                        )
+                        self.logger.info(f"Tool {tool_name} result received")
+                        
+                        # Add the tool result as a user message (similar to the working implementation)
+                        tool_result_message = {
+                            "role": "user",
+                            "content": f"Tool '{tool_name}' returned: {content}"
+                        }
+                        self.messages.append(tool_result_message)
                         await self.log_conversation()
                     except Exception as e:
                         self.logger.error(f"Error calling tool {tool_name}: {e}")
-                        self.messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_use_id,
-                                "content": f"Error using {tool_name}: {str(e)}",
-                            }
-                        )
+                        tool_error_message = {
+                            "role": "user",
+                            "content": f"Error using tool '{tool_name}': {str(e)}"
+                        }
+                        self.messages.append(tool_error_message)
                         await self.log_conversation()
 
             return self.messages
@@ -201,22 +247,6 @@ class MCPClient:
                     "content": f"I'm sorry, I encountered an error: {str(e)}",
                 },
             ]
-
-    async def call_llm(self):
-        """Call the Groq LLM with the current messages and tools.
-        
-        Returns:
-            Groq API response
-        """
-        try:
-            self.logger.info("Calling Groq LLM")
-            return await self.llm.generate_completion(
-                messages=self.messages,
-                tools=self.tools
-            )
-        except Exception as e:
-            self.logger.error(f"Error calling Groq LLM: {e}")
-            raise
 
     async def cleanup(self):
         """Clean up resources when shutting down."""
@@ -279,12 +309,21 @@ class MCPClient:
         serializable_conversation = []
         for message in self.messages:
             try:
-                serializable_message = {"role": message["role"], "content": []}
+                serializable_message = {"role": message["role"]}
 
                 if isinstance(message.get("content"), str):
                     serializable_message["content"] = message["content"]
                 elif isinstance(message.get("content"), list):
-                    serializable_message["content"] = message["content"]
+                    serializable_message["content"] = []
+                    for item in message["content"]:
+                        if hasattr(item, "to_dict"):
+                            serializable_message["content"].append(item.to_dict())
+                        elif hasattr(item, "dict"):
+                            serializable_message["content"].append(item.dict())
+                        elif hasattr(item, "model_dump"):
+                            serializable_message["content"].append(item.model_dump())
+                        else:
+                            serializable_message["content"].append(item)
                 else:
                     serializable_message["content"] = str(message.get("content", ""))
 
