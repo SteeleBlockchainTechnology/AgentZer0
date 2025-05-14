@@ -1,12 +1,9 @@
-# Fixed version of mcp_client.py for Groq v0.4.2
-# This replaces the import of ChatCompletion and updates any related code
-
 # ============================================================================
-# MCP CLIENT
+# MCP CLIENT UPDATED FOR WEB3 RESEARCH MCP
 # ============================================================================
-# This file implements the client for communicating with the MCP server and LLM.
-# It serves as the core component that connects the API with the MCP ecosystem.
+# This file implements the client for communicating with web3-research-mcp server.
 
+import asyncio
 from typing import Optional, List, Dict, Any
 from contextlib import AsyncExitStack
 import traceback
@@ -20,69 +17,44 @@ from mcp.client.stdio import stdio_client
 
 # Groq API client for LLM
 from groq import Groq
-# Remove or comment out the ChatCompletion import as it's not available in this version
-# from groq.types import ChatCompletion  
 
 # Import application logger
 from utils.logger import logger
 
+# Import settings
+from config.settings import settings
+
 
 class MCPClient:
-    """Client for interacting with the MCP server and Groq LLM
-    
-    This class handles:
-    1. Connection to the MCP server via stdio transport
-    2. Retrieval of available tools from the MCP server
-    3. Processing user queries through the LLM
-    4. Executing tool calls based on LLM responses
-    5. Maintaining conversation state
-    6. Logging conversations for debugging and analysis
-    
-    The client acts as a bridge between the FastAPI routes and the underlying
-    MCP and LLM functionality.
-    """
+    """Client for interacting with the MCP server and Groq LLM"""
     def __init__(self):
-        """Initialize the MCP client
-        
-        Sets up the client with empty session, tools, and messages.
-        Initializes the Groq client for LLM communication.
-        """
+        """Initialize the MCP client"""
         # Initialize session and client objects
-        self.session: Optional[ClientSession] = None  # MCP client session
-        self.exit_stack = AsyncExitStack()            # For managing async context
-        self.llm = Groq(api_key=os.environ.get("GROQ_API_KEY"))  # Groq API client
-        self.tools = []                               # Available MCP tools
-        self.messages = []                            # Conversation history
-        self.logger = logger                          # Application logger
+        self.session: Optional[ClientSession] = None
+        self.exit_stack = AsyncExitStack()
+        self.llm = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+        self.tools = []
+        self.messages = []
+        self.logger = logger
 
-    async def connect_to_server(self, server_script_path: str):
-        """Connect to the MCP server
+    async def connect_to_server(self, _=None):
+        """Connect to the web3-research-mcp server
         
-        Establishes a connection to the MCP server using the provided script path.
-        Initializes the session and retrieves available tools.
+        Note: The parameter is ignored and settings are used instead
         
-        Args:
-            server_script_path: Path to the MCP server script (.py or .js)
-            
         Returns:
             bool: True if connection was successful
-            
-        Raises:
-            ValueError: If the server script is not a .py or .js file
-            Exception: If connection fails for any other reason
         """
         try:
-            # Determine the script type and appropriate command
-            is_python = server_script_path.endswith(".py")
-            is_js = server_script_path.endswith(".js")
-            if not (is_python or is_js):
-                raise ValueError("Server script must be a .py or .js file")
-
-            # Set up the command to run the server script
-            command = "python" if is_python else "node"
+            # Set up the npx command to run the web3-research-mcp package
             server_params = StdioServerParameters(
-                command=command, args=[server_script_path], env=None
+                command=settings.mcp_command,
+                args=settings.mcp_args,
+                env=None  # Use the current environment
             )
+
+            # Log the command being executed
+            self.logger.info(f"Starting MCP server with: {settings.mcp_command} {' '.join(settings.mcp_args)}")
 
             # Establish stdio transport connection
             stdio_transport = await self.exit_stack.enter_async_context(
@@ -97,7 +69,7 @@ class MCPClient:
 
             await self.session.initialize()
 
-            self.logger.info("Connected to MCP server")
+            self.logger.info("Connected to web3-research-mcp server")
 
             # Retrieve and format available tools from the server
             mcp_tools = await self.get_mcp_tools()
@@ -110,9 +82,9 @@ class MCPClient:
                 for tool in mcp_tools
             ]
 
-            self.logger.info(
-                f"Available tools: {[tool['name'] for tool in self.tools]}"
-            )
+            # Log available tool names
+            tool_names = [tool["name"] for tool in self.tools]
+            self.logger.info(f"Available tools: {tool_names}")
 
             return True
 
@@ -122,16 +94,7 @@ class MCPClient:
             raise
 
     async def get_mcp_tools(self):
-        """Get the list of available tools from the MCP server
-        
-        Retrieves the tools that can be used by the LLM from the MCP server.
-        
-        Returns:
-            List: The available tools with their metadata
-            
-        Raises:
-            Exception: If tool retrieval fails
-        """
+        """Get the list of available tools from the MCP server"""
         try:
             response = await self.session.list_tools()
             return response.tools
@@ -140,24 +103,7 @@ class MCPClient:
             raise
 
     async def process_query(self, query: str):
-        """Process a user query through the LLM and MCP tools
-        
-        This method:
-        1. Initializes a new conversation with the user query
-        2. Calls the LLM to generate a response
-        3. Handles tool calls if the LLM requests them
-        4. Continues the conversation until a final text response is generated
-        5. Logs the conversation for debugging
-        
-        Args:
-            query: The user's text query
-            
-        Returns:
-            List[Dict]: The conversation messages
-            
-        Raises:
-            Exception: If query processing fails
-        """
+        """Process a user query through the LLM and MCP tools"""
         try:
             self.logger.info(f"Processing query: {query}")
             # Initialize conversation with user query
@@ -169,9 +115,7 @@ class MCPClient:
                 # Get response from LLM
                 response = await self.call_llm()
 
-                # Extract the message from the response using the correct structure for Groq v0.4.2
-                # The response structure in v0.4.2 might be different from what was initially expected
-                # Assuming the response follows a standard structure similar to OpenAI's
+                # Extract the message from the response
                 message = response.choices[0].message
                 
                 # Check if the message has tool calls
@@ -196,7 +140,7 @@ class MCPClient:
                         try:
                             # Execute the tool call via MCP
                             result = await self.session.call_tool(tool_name, tool_args)
-                            self.logger.info(f"Tool {tool_name} result: {result}...")
+                            self.logger.info(f"Tool {tool_name} result received")
                             
                             # Add tool result to conversation
                             self.messages.append(
@@ -225,8 +169,6 @@ class MCPClient:
                     await self.log_conversation()
                     break
 
-                # Tool calls are now processed in the code above
-
             return self.messages
 
         except Exception as e:
@@ -234,26 +176,21 @@ class MCPClient:
             raise
 
     async def call_llm(self):
-        """Call the Groq LLM with the current conversation
-        
-        Sends the current conversation history to the LLM and gets a response.
-        The LLM may generate a text response or request to use tools.
-        
-        Returns:
-            The LLM response (structure depends on Groq API version)
-            
-        Raises:
-            Exception: If the LLM call fails
-        """
+        """Call the Groq LLM with the current conversation"""
         try:
             self.logger.info("Calling LLM")
             # Add a system message if not already present
             if not any(msg.get("role") == "system" for msg in self.messages):
                 self.messages.insert(0, {
                     "role": "system",
-                    "content": "You are a helpful assistant with access to tools."
+                    "content": (
+                        "You are a helpful assistant with expertise in cryptocurrency research. "
+                        "You have access to web3-research-mcp tools that can help you gather information "
+                        "about various cryptocurrency tokens, market data, and blockchain projects."
+                    )
                 })
                 
+            # Call the Groq API
             return self.llm.chat.completions.create(
                 model="llama-3.3-70b-versatile",  # Groq model version
                 max_tokens=1000,                 # Maximum response length
@@ -265,14 +202,7 @@ class MCPClient:
             raise
 
     async def cleanup(self):
-        """Clean up resources when shutting down
-        
-        Closes the connection to the MCP server and releases resources.
-        Called during application shutdown in the lifespan context manager.
-        
-        Raises:
-            Exception: If cleanup fails
-        """
+        """Clean up resources when shutting down"""
         try:
             await self.exit_stack.aclose()
             self.logger.info("Disconnected from MCP server")
@@ -282,14 +212,7 @@ class MCPClient:
             raise
 
     async def log_conversation(self):
-        """Log the current conversation to a file
-        
-        Saves the conversation history to a JSON file in the 'conversations' directory.
-        Handles serialization of different message content types.
-        
-        Raises:
-            Exception: If logging fails
-        """
+        """Log the current conversation to a file"""
         # Create conversations directory if it doesn't exist
         os.makedirs("conversations", exist_ok=True)
 
@@ -298,12 +221,13 @@ class MCPClient:
         # Process each message for serialization
         for message in self.messages:
             try:
-                serializable_message = {"role": message["role"], "content": []}
+                serializable_message = {"role": message["role"]}
 
                 # Handle different content types (string vs list)
                 if isinstance(message["content"], str):
                     serializable_message["content"] = message["content"]
                 elif isinstance(message["content"], list):
+                    serializable_message["content"] = []
                     # Process each content item based on its type
                     for content_item in message["content"]:
                         if hasattr(content_item, "to_dict"):
@@ -352,5 +276,4 @@ class MCPClient:
                 json.dump(serializable_conversation, f, indent=2, default=str)
         except Exception as e:
             self.logger.error(f"Error writing conversation to file: {str(e)}")
-            self.logger.debug(f"Serializable conversation: {serializable_conversation}")
             raise

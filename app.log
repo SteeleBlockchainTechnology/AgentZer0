@@ -1,0 +1,11 @@
+2025-05-14 11:42:48,046 - mcp_client - INFO - Disconnected from MCP server
+2025-05-14 11:43:53,430 - mcp_client - INFO - Starting MCP server with: npx -y web3-research-mcp@latest
+2025-05-14 11:43:55,990 - mcp_client - INFO - Connected to web3-research-mcp server
+2025-05-14 11:43:55,994 - mcp_client - INFO - Available tools: ['search', 'create-research-plan', 'research-with-keywords', 'update-status', 'fetch-content', 'search-source', 'list-resources', 'research-source', 'research-token']
+2025-05-14 11:43:55,995 - discord.client - WARNING - PyNaCl is not installed, voice will NOT be supported
+2025-05-14 11:43:55,998 - mcp_client - INFO - Starting Discord bot
+2025-05-14 11:43:55,998 - discord.client - INFO - logging in using static token
+2025-05-14 11:43:56,786 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 2272e954cbb11b246090bb01abdc8a1b).
+2025-05-14 11:43:58,791 - mcp_client - INFO - Discord bot logged in as Trade Talk#3433
+2025-05-14 11:44:27,821 - mcp_client - INFO - Disconnected from MCP server
+2025-05-14 11:44:27,822 - mcp_client - INFO - Closing Discord bot connection
