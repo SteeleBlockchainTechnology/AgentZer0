@@ -1,7 +1,8 @@
 # ============================================================================
-# MCP CLIENT UPDATED FOR WEB3 RESEARCH MCP
+# MCP CLIENT (REFACTORED)
 # ============================================================================
 # This file implements the client for communicating with web3-research-mcp server.
+# LLM functionality has been moved to language_model.py
 
 import asyncio
 from typing import Optional, List, Dict, Any
@@ -15,27 +16,33 @@ from datetime import datetime
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-# Groq API client for LLM
-from groq import Groq
-
-# Import application logger
+# Import application components
 from utils.logger import logger
-
-# Import settings
+from client.language_model import LanguageModelClient
 from config.settings import settings
 
 
 class MCPClient:
-    """Client for interacting with the MCP server and Groq LLM"""
+    """Client for interacting with the MCP server
+    
+    Responsible for:
+    1. Connecting to the MCP server
+    2. Retrieving available tools
+    3. Processing user queries via the language model
+    4. Executing tool calls
+    5. Maintaining conversation state
+    """
     def __init__(self):
         """Initialize the MCP client"""
         # Initialize session and client objects
         self.session: Optional[ClientSession] = None
         self.exit_stack = AsyncExitStack()
-        self.llm = Groq(api_key=os.environ.get("GROQ_API_KEY"))
         self.tools = []
         self.messages = []
         self.logger = logger
+        
+        # Create language model client
+        self.language_model = LanguageModelClient()
 
     async def connect_to_server(self, _=None):
         """Connect to the web3-research-mcp server
@@ -73,11 +80,13 @@ class MCPClient:
 
             # Retrieve and format available tools from the server
             mcp_tools = await self.get_mcp_tools()
+            
+            # Format the tools with proper structure and default descriptions
             self.tools = [
                 {
                     "name": tool.name,
                     "description": tool.description,
-                    "input_schema": tool.inputSchema,
+                    "inputSchema": tool.inputSchema,
                 }
                 for tool in mcp_tools
             ]
@@ -112,8 +121,11 @@ class MCPClient:
 
             # Continue conversation until a final response is reached
             while True:
-                # Get response from LLM
-                response = await self.call_llm()
+                # Get response from LLM using the language model client
+                response = await self.language_model.generate_completion(
+                    messages=self.messages,
+                    tools=self.tools
+                )
 
                 # Extract the message from the response
                 message = response.choices[0].message
@@ -123,7 +135,7 @@ class MCPClient:
                     # Process tool calls
                     assistant_message = {
                         "role": "assistant",
-                        "content": message.content,
+                        "content": message.content or "",  # Ensure content is never None
                         "tool_calls": message.tool_calls
                     }
                     self.messages.append(assistant_message)
@@ -132,7 +144,11 @@ class MCPClient:
                     # Process each tool call
                     for tool_call in message.tool_calls:
                         tool_name = tool_call.function.name
-                        tool_args = json.loads(tool_call.function.arguments)
+                        try:
+                            tool_args = json.loads(tool_call.function.arguments)
+                        except json.JSONDecodeError:
+                            tool_args = {}  # Default to empty if parsing fails
+                            
                         tool_use_id = tool_call.id
                         self.logger.info(
                             f"Calling tool {tool_name} with args {tool_args}"
@@ -145,25 +161,28 @@ class MCPClient:
                             # Add tool result to conversation
                             self.messages.append(
                                 {
-                                    "role": "user",
-                                    "content": [
-                                        {
-                                            "type": "tool_result",
-                                            "tool_use_id": tool_use_id,
-                                            "content": result.content,
-                                        }
-                                    ],
+                                    "role": "tool",
+                                    "tool_call_id": tool_use_id,
+                                    "content": result.content or "",  # Ensure content is never None
                                 }
                             )
                             await self.log_conversation()
                         except Exception as e:
                             self.logger.error(f"Error calling tool {tool_name}: {e}")
-                            raise
+                            # Add error result to conversation
+                            self.messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_use_id,
+                                    "content": f"Error: {str(e)}",
+                                }
+                            )
+                            await self.log_conversation()
                 else:
                     # Simple text response
                     assistant_message = {
                         "role": "assistant",
-                        "content": message.content,
+                        "content": message.content or "",  # Ensure content is never None
                     }
                     self.messages.append(assistant_message)
                     await self.log_conversation()
@@ -173,32 +192,6 @@ class MCPClient:
 
         except Exception as e:
             self.logger.error(f"Error processing query: {e}")
-            raise
-
-    async def call_llm(self):
-        """Call the Groq LLM with the current conversation"""
-        try:
-            self.logger.info("Calling LLM")
-            # Add a system message if not already present
-            if not any(msg.get("role") == "system" for msg in self.messages):
-                self.messages.insert(0, {
-                    "role": "system",
-                    "content": (
-                        "You are a helpful assistant with expertise in cryptocurrency research. "
-                        "You have access to web3-research-mcp tools that can help you gather information "
-                        "about various cryptocurrency tokens, market data, and blockchain projects."
-                    )
-                })
-                
-            # Call the Groq API
-            return self.llm.chat.completions.create(
-                model="llama-3.3-70b-versatile",  # Groq model version
-                max_tokens=1000,                 # Maximum response length
-                messages=self.messages,          # Conversation history
-                tools=self.tools,                # Available tools
-            )
-        except Exception as e:
-            self.logger.error(f"Error calling LLM: {e}")
             raise
 
     async def cleanup(self):
@@ -260,6 +253,10 @@ class MCPClient:
                             except:
                                 self.logger.warning(f"Could not serialize tool_call: {tool_call}")
                                 serializable_message["tool_calls"].append(str(tool_call))
+                
+                # Add tool_call_id if present (for tool responses)
+                if "tool_call_id" in message:
+                    serializable_message["tool_call_id"] = message["tool_call_id"]
 
                 serializable_conversation.append(serializable_message)
             except Exception as e:

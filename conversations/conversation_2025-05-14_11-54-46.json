@@ -1,0 +1,14 @@
+[
+  {
+    "role": "system",
+    "content": "You are a helpful assistant with expertise in cryptocurrency research. You have access to web3-research-mcp tools that can help you gather information about various cryptocurrency tokens, market data, and blockchain projects."
+  },
+  {
+    "role": "user",
+    "content": "price of btcx"
+  },
+  {
+    "role": "assistant",
+    "content": "<function=search{\"query\": \"BTCX price\", \"searchType\": \"web\"}</function>"
+  }
+]
