@@ -246,3 +246,207 @@
 2025-05-14 11:59:48,701 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
 2025-05-14 12:00:34,149 - mcp_client - INFO - Disconnected from MCP server
 2025-05-14 12:00:34,149 - mcp_client - INFO - Closing Discord bot connection
+2025-05-14 12:04:58,313 - mcp_client - INFO - Starting MCP server with: npx -y web3-research-mcp@latest
+2025-05-14 12:05:13,536 - mcp_client - INFO - Connected to web3-research-mcp server
+2025-05-14 12:05:13,548 - mcp_client - INFO - Available tools: ['search', 'create-research-plan', 'research-with-keywords', 'update-status', 'fetch-content', 'search-source', 'list-resources', 'research-source', 'research-token']
+2025-05-14 12:05:13,550 - discord.client - WARNING - PyNaCl is not installed, voice will NOT be supported
+2025-05-14 12:05:13,554 - mcp_client - INFO - Starting Discord bot
+2025-05-14 12:05:13,554 - discord.client - INFO - logging in using static token
+2025-05-14 12:05:14,565 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 495a7318650a9902aab6f0331948578d).
+2025-05-14 12:05:16,610 - mcp_client - INFO - Discord bot logged in as Trade Talk#3433
+2025-05-14 12:05:25,045 - mcp_client - INFO - Processing Discord query: price of btc
+2025-05-14 12:05:25,045 - mcp_client - INFO - Processing query: price of btc
+2025-05-14 12:05:25,045 - mcp_client - INFO - Calling LLM with 1 messages
+2025-05-14 12:05:25,045 - mcp_client - INFO - Using 9 tools
+2025-05-14 12:05:25,046 - mcp_client - INFO - First tool format: {
+  "type": "function",
+  "function": {
+    "name": "search",
+    "description": "Tool for search",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query"
+        },
+        "searchType": {
+          "type": "string",
+          "enum": [
+            "web",
+            "news",
+            "images",
+            "videos"
+          ],
+          "default": "web",
+          "description": "Type of search"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  }
+}
+2025-05-14 12:05:30,979 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2025-05-14 12:05:58,452 - mcp_client - INFO - Disconnected from MCP server
+2025-05-14 12:05:58,453 - mcp_client - INFO - Closing Discord bot connection
+2025-05-14 12:06:15,288 - mcp_client - INFO - Starting MCP server with: npx -y web3-research-mcp@latest
+2025-05-14 12:06:17,481 - mcp_client - INFO - Connected to web3-research-mcp server
+2025-05-14 12:06:17,485 - mcp_client - INFO - Available tools: ['search', 'create-research-plan', 'research-with-keywords', 'update-status', 'fetch-content', 'search-source', 'list-resources', 'research-source', 'research-token']
+2025-05-14 12:06:17,486 - discord.client - WARNING - PyNaCl is not installed, voice will NOT be supported
+2025-05-14 12:06:17,488 - mcp_client - INFO - Starting Discord bot
+2025-05-14 12:06:17,488 - discord.client - INFO - logging in using static token
+2025-05-14 12:06:18,563 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 3dd7a3b6741962216d7e374feabe0d22).
+2025-05-14 12:06:20,595 - mcp_client - INFO - Discord bot logged in as Trade Talk#3433
+2025-05-14 12:06:34,514 - mcp_client - INFO - Processing Discord query: price of btc
+2025-05-14 12:06:34,515 - mcp_client - INFO - Processing query: price of btc
+2025-05-14 12:06:34,515 - mcp_client - INFO - Processing iteration 1
+2025-05-14 12:06:34,515 - mcp_client - INFO - Calling LLM with 2 messages
+2025-05-14 12:06:34,515 - mcp_client - INFO - Using 9 tools
+2025-05-14 12:06:34,515 - mcp_client - INFO - First tool format: {
+  "type": "function",
+  "function": {
+    "name": "search",
+    "description": "Tool for search",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query"
+        },
+        "searchType": {
+          "type": "string",
+          "enum": [
+            "web",
+            "news",
+            "images",
+            "videos"
+          ],
+          "default": "web",
+          "description": "Type of search"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  }
+}
+2025-05-14 12:06:35,051 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2025-05-14 12:10:01,203 - mcp_client - INFO - Disconnected from MCP server
+2025-05-14 12:10:01,203 - mcp_client - INFO - Closing Discord bot connection
+2025-05-14 12:10:07,173 - mcp_client - INFO - Starting MCP server with: npx -y web3-research-mcp@latest
+2025-05-14 12:10:09,712 - mcp_client - INFO - Connected to web3-research-mcp server
+2025-05-14 12:10:09,716 - mcp_client - INFO - Available tools: ['search', 'create-research-plan', 'research-with-keywords', 'update-status', 'fetch-content', 'search-source', 'list-resources', 'research-source', 'research-token']
+2025-05-14 12:10:09,716 - discord.client - WARNING - PyNaCl is not installed, voice will NOT be supported
+2025-05-14 12:10:09,719 - mcp_client - INFO - Starting Discord bot
+2025-05-14 12:10:09,719 - discord.client - INFO - logging in using static token
+2025-05-14 12:10:10,789 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: a43d0bdafec77a467c1f275b46f8371b).
+2025-05-14 12:10:12,809 - mcp_client - INFO - Discord bot logged in as Trade Talk#3433
+2025-05-14 12:10:45,589 - mcp_client - INFO - Processing Discord query: price of btc
+2025-05-14 12:10:45,589 - mcp_client - INFO - Processing query: price of btc
+2025-05-14 12:10:45,589 - mcp_client - INFO - Processing iteration 1
+2025-05-14 12:10:45,589 - mcp_client - INFO - Calling LLM with 2 messages
+2025-05-14 12:10:45,589 - mcp_client - INFO - Using 9 tools
+2025-05-14 12:10:45,589 - mcp_client - INFO - First tool format: {
+  "type": "function",
+  "function": {
+    "name": "search",
+    "description": "Tool for search",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query"
+        },
+        "searchType": {
+          "type": "string",
+          "enum": [
+            "web",
+            "news",
+            "images",
+            "videos"
+          ],
+          "default": "web",
+          "description": "Type of search"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  }
+}
+2025-05-14 12:10:46,701 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2025-05-14 12:24:48,979 - mcp_client - INFO - Disconnected from MCP server
+2025-05-14 12:24:48,980 - mcp_client - INFO - Closing Discord bot connection
+2025-05-14 12:24:57,865 - mcp_client - INFO - Starting MCP server with: npx -y web3-research-mcp@latest
+2025-05-14 12:25:00,483 - mcp_client - INFO - Connected to web3-research-mcp server
+2025-05-14 12:25:00,487 - mcp_client - INFO - Available tools: ['search', 'create-research-plan', 'research-with-keywords', 'update-status', 'fetch-content', 'search-source', 'list-resources', 'research-source', 'research-token']
+2025-05-14 12:25:00,488 - discord.client - WARNING - PyNaCl is not installed, voice will NOT be supported
+2025-05-14 12:25:00,499 - mcp_client - INFO - Starting Discord bot
+2025-05-14 12:25:00,499 - discord.client - INFO - logging in using static token
+2025-05-14 12:25:01,624 - discord.gateway - INFO - Shard ID None has connected to Gateway (Session ID: 9b02d4b21accb48a5822cbd23fc6acf6).
+2025-05-14 12:25:03,646 - mcp_client - INFO - Discord bot logged in as Trade Talk#3433
+2025-05-14 12:25:07,898 - mcp_client - INFO - Processing Discord query: price of btc
+2025-05-14 12:25:07,899 - mcp_client - INFO - Processing query: price of btc
+2025-05-14 12:25:07,899 - mcp_client - INFO - Processing iteration 1
+2025-05-14 12:25:07,899 - mcp_client - INFO - Calling LLM with 2 messages
+2025-05-14 12:25:07,899 - mcp_client - INFO - Sending messages to LLM: [
+  {
+    "role": "system",
+    "content": "You are a helpful assistant with expertise in cryptocurrency research. You have access to web3-research-mcp tools that can help you gather information about various cryptocurrency tokens, market data, and blockchain projects. To use tools, format your response like this: <function=tool_name{\"param\":\"value\"}>. For example, to search for bitcoin price, use: <function=search{\"query\":\"bitcoin price\",\"searchType\":\"web\"}>. Always include explanatory text along with any function calls."
+  },
+  {
+    "role": "user",
+    "content": "price of btc"
+  }
+]
+2025-05-14 12:25:07,900 - mcp_client - INFO - Using 9 tools
+2025-05-14 12:25:07,900 - mcp_client - INFO - First tool format: {
+  "type": "function",
+  "function": {
+    "name": "search",
+    "description": "Tool for search",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query"
+        },
+        "searchType": {
+          "type": "string",
+          "enum": [
+            "web",
+            "news",
+            "images",
+            "videos"
+          ],
+          "default": "web",
+          "description": "Type of search"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  }
+}
+2025-05-14 12:25:09,008 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2025-05-14 12:25:09,010 - mcp_client - INFO - LLM response: To find the current price of Bitcoin (BTC), I will use the search function to look up the latest information on the web. 
+
+<function=search{"query":"bitcoin price","searchType":"web"}>
+2025-05-14 12:29:43,368 - mcp_client - INFO - Disconnected from MCP server
+2025-05-14 12:29:43,368 - mcp_client - INFO - Closing Discord bot connection
