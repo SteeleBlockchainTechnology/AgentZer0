@@ -53,7 +53,6 @@ conversations/
 
 # Node.js (for MCP server)
 node_modules/
-package-lock.json
 
 # Testing
 .coverage
