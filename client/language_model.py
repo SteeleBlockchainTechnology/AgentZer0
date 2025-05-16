@@ -27,6 +27,34 @@ class LanguageModelClient:
         self.llm = Groq(api_key=self.api_key)
         self.logger = logger
         self.model_name = os.environ.get("GROQ_MODEL", "llama-3-8b-8192")
+    
+    def create_system_message(self, tool_names: List[str] = None) -> Dict[str, str]:
+        """Create the system message with appropriate instructions
+        
+        Args:
+            tool_names: List of available tool names to include in the system message
+            
+        Returns:
+            Dict containing the system message
+        """
+        available_tools_str = ", ".join(f"`{name}`" for name in (tool_names or []))
+        
+        content = (
+            "You are a helpful assistant with expertise in cryptocurrency research. "
+        )
+        
+        if tool_names:
+            content += (
+                f"You have access to the following web3-research-mcp tools: {available_tools_str}. "
+                "These tools can help you gather information about cryptocurrency tokens, market data, and blockchain projects. "
+                "To use tools, format your response like this: <function=tool_name{\"param\":\"value\"}>. "
+                "For example, to search for bitcoin price, use: <function=search{\"query\":\"bitcoin price\",\"searchType\":\"web\"}>. "
+                "Always include explanatory text along with any function calls. "
+                f"IMPORTANT: ONLY use the specific tool names listed above: {available_tools_str}. "
+                "Do not invent or try to use tools that aren't in this list."
+            )
+        
+        return {"role": "system", "content": content}
         
     async def generate_completion(self, 
                                  messages: List[Dict[str, Any]], 
@@ -48,40 +76,24 @@ class LanguageModelClient:
         try:
             self.logger.info(f"Calling LLM with {len(messages)} messages")
             
-            # Add a system message if not already present
-            if not any(msg.get("role") == "system" for msg in messages):
-                system_message = {
-                    "role": "system",
-                    "content": (
-                        "You are a helpful assistant with expertise in cryptocurrency research. "
-                        "You have access to web3-research-mcp tools that can help you gather information "
-                        "about various cryptocurrency tokens, market data, and blockchain projects. "
-                        "To use tools, format your response like this: <function=tool_name{\"param\":\"value\"}>. "
-                        "For example, to search for bitcoin price, use: <function=search{\"query\":\"bitcoin price\",\"searchType\":\"web\"}>. "
-                        "Always include explanatory text along with any function calls."
-                    )
-                }
-                messages.insert(0, system_message)
-            else:
-                # Ensure system message emphasizes the function call format
-                for i, msg in enumerate(messages):
-                    if msg.get("role") == "system" and "<function=" not in msg.get("content", ""):
-                        messages[i]["content"] = (
-                            "You are a helpful assistant with expertise in cryptocurrency research. "
-                            "You have access to web3-research-mcp tools that can help you gather information "
-                            "about various cryptocurrency tokens, market data, and blockchain projects. "
-                            "To use tools, format your response like this: <function=tool_name{\"param\":\"value\"}>. "
-                            "For example, to search for bitcoin price, use: <function=search{\"query\":\"bitcoin price\",\"searchType\":\"web\"}>. "
-                            "Always include explanatory text along with any function calls."
-                        )
-                        break
+            # Make a copy to avoid modifying the original
+            messages_copy = messages.copy()
+            
+            # Get list of tool names if tools are provided
+            tool_names = [tool["name"] for tool in (tools or [])]
+            
+            # Add or update system message
+            if not any(msg.get("role") == "system" for msg in messages_copy):
+                # Add system message if not present
+                system_message = self.create_system_message(tool_names)
+                messages_copy.insert(0, system_message)
             
             # Check if last few messages were about tools and crypto prices/info
             # If so, encourage function calls more explicitly
             should_encourage_tools = False
-            if len(messages) >= 3:
+            if len(messages_copy) >= 3 and tools:
                 last_user_msg = None
-                for msg in reversed(messages):
+                for msg in reversed(messages_copy):
                     if msg.get("role") == "user":
                         last_user_msg = msg.get("content", "").lower()
                         break
@@ -92,9 +104,9 @@ class LanguageModelClient:
             
             if should_encourage_tools:
                 # Add a reminder to use function calls if appropriate
-                for i, msg in enumerate(messages):
+                for i, msg in enumerate(messages_copy):
                     if msg.get("role") == "system":
-                        messages[i]["content"] += (
+                        messages_copy[i]["content"] += (
                             " For queries about cryptocurrency prices or market data, "
                             "please use the search tool or other available tools to get real-time information. "
                             "Always use <function=tool_name{...}> syntax when appropriate."
@@ -102,13 +114,13 @@ class LanguageModelClient:
                         break
             
             # Log the final messages for debugging
-            self.logger.info(f"Sending messages to LLM: {json.dumps(messages, indent=2)}")
+            self.logger.info(f"Sending messages to LLM: {json.dumps(messages_copy, indent=2)}")
             
             # Prepare parameters for the API call
             params = {
                 "model": self.model_name,
                 "max_tokens": max_tokens,
-                "messages": messages,
+                "messages": messages_copy,
                 "temperature": 0.7,
             }
             

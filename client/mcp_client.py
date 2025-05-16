@@ -144,26 +144,9 @@ class MCPClient:
         try:
             self.logger.info(f"Processing query: {query}")
             
-            # Get list of available tool names
-            available_tool_names = [tool["name"] for tool in self.tools]
-            available_tools_str = ", ".join(f"`{name}`" for name in available_tool_names)
-            
-            # Initialize conversation with system and user messages
-            system_message = {
-                "role": "system",
-                "content": (
-                    "You are a helpful assistant with expertise in cryptocurrency research. "
-                    f"You have access to the following web3-research-mcp tools: {available_tools_str}. "
-                    "These tools can help you gather information about cryptocurrency tokens, market data, and blockchain projects. "
-                    "To use tools, format your response like this: <function=tool_name{\"param\":\"value\"}>. "
-                    "For example, to search for bitcoin price, use: <function=search{\"query\":\"bitcoin price\",\"searchType\":\"web\"}>. "
-                    "Always include explanatory text along with any function calls. "
-                    f"IMPORTANT: ONLY use the specific tool names listed above: {available_tools_str}. "
-                    "Do not invent or try to use tools that aren't in this list."
-                ),
-            }
+            # Initialize conversation with user message
             user_message = {"role": "user", "content": query}
-            self.messages = [system_message, user_message]
+            self.messages = [user_message]
 
             # Start conversation loop
             while True:
@@ -239,14 +222,20 @@ class MCPClient:
         except Exception as e:
             self.logger.error(f"Error processing query: {e}")
             traceback.print_exc()
-            return [
-                system_message,
-                user_message,
-                {
-                    "role": "assistant",
-                    "content": f"I'm sorry, I encountered an error: {str(e)}",
-                },
-            ]
+            
+            # Create fallback error message
+            error_message = {
+                "role": "assistant",
+                "content": f"I'm sorry, I encountered an error: {str(e)}",
+            }
+            
+            # Ensure we have at least a user message
+            if not self.messages or not any(msg.get("role") == "user" for msg in self.messages):
+                self.messages = [user_message, error_message]
+            else:
+                self.messages.append(error_message)
+                
+            return self.messages
 
     async def cleanup(self):
         """Clean up resources when shutting down."""
