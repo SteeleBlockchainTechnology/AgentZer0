@@ -81,3 +81,5 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+.app.log

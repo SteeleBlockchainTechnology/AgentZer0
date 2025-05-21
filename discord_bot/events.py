@@ -50,42 +50,24 @@ class EventHandler:
         # Register on_message event
         @self.bot.event
         async def on_message(message):
-            # Ignore messages from the bot itself
-            if message.author == self.bot.user:
+            # Ignore messages from the bot itself or other bots
+            if message.author == self.bot.user or message.author.bot:
                 return
             
             # Process commands first (for !help, !tools, etc.)
             await self.bot.process_commands(message)
             
-            # Check message type:
-            is_dm = isinstance(message.channel, discord.DMChannel)
-            is_mention = self.bot.user in message.mentions
-            
-            # Respond to:
-            # 1. Direct messages
-            # 2. Messages that mention the bot
-            # 3. Messages in channels where bot is already active
-            # 4. Messages that contain the bot's name (optional)
-            
-            should_respond = (
-                is_dm or 
-                is_mention or 
-                message.channel.id in self.active_channels or
-                self.bot.user.name.lower() in message.content.lower()  # Optional: comment this line if you don't want name triggers
-            )
-            
             # Create a unique ID for this message to avoid processing duplicates
             message_id = f"{message.channel.id}_{message.id}"
             
-            if should_respond and message_id not in self.processing_queries:
+            # Respond to all messages that aren't being processed yet
+            if message_id not in self.processing_queries:
                 # Add to processing set
                 self.processing_queries.add(message_id)
                 
                 try:
-                    # If the message mentions the bot, remove the mention from the message content
+                    # Get the query text
                     query = message.content
-                    if is_mention:
-                        query = query.replace(f"<@{self.bot.user.id}>", "").strip()
                     
                     # Add this channel to active channels
                     self.active_channels.add(message.channel.id)
@@ -150,7 +132,7 @@ class EventHandler:
             await self.bot.change_presence(
                 activity=discord.Activity(
                     type=discord.ActivityType.listening, 
-                    name="crypto questions"
+                    name="all messages"
                 )
             )
     
