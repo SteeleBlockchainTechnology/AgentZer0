@@ -55,8 +55,18 @@ class EventHandler:
                 return
             
             # Process commands first (for !help, !tools, etc.)
+            # This allows commands to use the shared self.mcp_client if they are designed to.
             await self.bot.process_commands(message)
             
+            # If the message was handled by a command, don't process it further here.
+            # This check assumes that commands consume the message context or that
+            # bot.process_commands gives an indication. A common way is to check
+            # if a command context was created and matched.
+            # For simplicity, if it's a command, we assume it's handled.
+            # You might need a more robust check depending on your command structure.
+            if message.content.startswith(self.bot.command_prefix):
+                return
+
             # Create a unique ID for this message to avoid processing duplicates
             message_id = f"{message.channel.id}_{message.id}"
             
@@ -65,6 +75,7 @@ class EventHandler:
                 # Add to processing set
                 self.processing_queries.add(message_id)
                 
+                current_mcp_client_instance = None  # For cleanup in finally block
                 try:
                     # Get the query text
                     query = message.content
@@ -74,53 +85,49 @@ class EventHandler:
                     
                     # Send typing indicator to show bot is processing
                     async with message.channel.typing():
-                        # Process the query through MCP client
-                        self.logger.info(f"Processing Discord query: {query}")
+                        self.logger.info(f"Creating new MCPClient instance for query: {query}")
+                        current_mcp_client_instance = MCPClient()
+
+                        self.logger.info(f"Connecting new MCPClient instance for query: {query}")
+                        if not await current_mcp_client_instance.connect_to_server():
+                            self.logger.error(f"Failed to connect new MCPClient for query: {query}")
+                            await message.reply("Sorry, I couldn't connect to my core services to process your request.")
+                            return
+
+                        self.logger.info(f"Processing Discord query with new MCPClient: {query}")
                         
-                        # Process query and get response
-                        messages = await self.mcp_client.process_query(query)
+                        # Process query using the new, isolated client instance
+                        # This call will handle the full loop, including tool usage.
+                        response_messages = await current_mcp_client_instance.process_query(query)
                         
-                        # Get the last assistant message
-                        assistant_response = self._get_latest_assistant_message(messages)
+                        # Get the last assistant message from the processed conversation
+                        assistant_response = self._get_latest_assistant_message(response_messages)
                         
-                        # Check if function call is in progress
-                        if "<function=" in assistant_response:
-                            # If function call is in progress, tell the user we're working on it
-                            interim_message = await message.reply("I'm using my tools to find information for you. Please wait a moment...")
-                            
-                            # Wait for a moment to allow tools to complete
-                            await asyncio.sleep(1)
-                            
-                            # Process the query again to get the final result after tool usage
-                            messages = await self.mcp_client.process_query(query)
-                            
-                            # Get the updated response
-                            assistant_response = self._get_latest_assistant_message(messages)
-                            
-                            # Edit the interim message with the final response
-                            await interim_message.edit(content=assistant_response)
-                        else:
-                            # Send the response directly
-                            if assistant_response:
-                                # Split long messages if needed (Discord has 2000 char limit)
-                                if len(assistant_response) <= 2000:
-                                    await message.reply(assistant_response)
-                                else:
-                                    # Split into chunks of 2000 chars
-                                    chunks = [assistant_response[i:i+2000] for i in range(0, len(assistant_response), 2000)]
-                                    for i, chunk in enumerate(chunks):
-                                        # First chunk gets a reply, others are sent as messages
-                                        if i == 0:
-                                            await message.reply(chunk)
-                                        else:
-                                            await message.channel.send(chunk)
+                        if assistant_response:
+                            # Split long messages if needed (Discord has 2000 char limit)
+                            if len(assistant_response) <= 2000:
+                                await message.reply(assistant_response)
                             else:
-                                # Fallback message if no response was found
-                                await message.reply("I'm sorry, I'm having trouble processing that request. Could you try asking in a different way?")
+                                # Split into chunks of 2000 chars
+                                chunks = [assistant_response[i:i+2000] for i in range(0, len(assistant_response), 2000)]
+                                for i, chunk in enumerate(chunks):
+                                    if i == 0:
+                                        await message.reply(chunk)
+                                    else:
+                                        await message.channel.send(chunk)
+                        else:
+                            # Fallback message if no response was found
+                            await message.reply("I'm sorry, I'm having trouble processing that request. Could you try asking in a different way?")
+                
                 except Exception as e:
-                    self.logger.error(f"Error processing Discord query: {e}")
+                    self.logger.error(f"Error processing Discord query with new MCPClient: {e}", exc_info=True)
                     await message.reply("Sorry, I encountered an error while processing your request.")
                 finally:
+                    # Ensure cleanup for the dynamically created client
+                    if current_mcp_client_instance:
+                        self.logger.info(f"Cleaning up MCPClient instance for query: {query}")
+                        await current_mcp_client_instance.cleanup()
+                    
                     # Remove from processing set
                     self.processing_queries.discard(message_id)
         
