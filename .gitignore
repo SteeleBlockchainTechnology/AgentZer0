@@ -82,4 +82,4 @@ wheels/
 *.egg
 MANIFEST
 
-.app.log
+app.log
