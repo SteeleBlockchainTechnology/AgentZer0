@@ -67,6 +67,10 @@ class EventHandler:
             if message.content.startswith(self.bot.command_prefix):
                 return
 
+            # Only process messages where the bot is mentioned
+            if self.bot.user not in message.mentions:
+                return
+                
             # Create a unique ID for this message to avoid processing duplicates
             message_id = f"{message.channel.id}_{message.id}"
             
@@ -77,8 +81,13 @@ class EventHandler:
                 
                 current_mcp_client_instance = None  # For cleanup in finally block
                 try:
-                    # Get the query text
-                    query = message.content
+                    # Get the query text - remove the mention of the bot
+                    query = re.sub(f'<@!?{self.bot.user.id}>', '', message.content).strip()
+                    
+                    # If the query is empty after removing the mention, don't process it
+                    if not query:
+                        await message.reply("Hello! How can I help you today?")
+                        return
                     
                     # Add this channel to active channels
                     self.active_channels.add(message.channel.id)
@@ -107,20 +116,34 @@ class EventHandler:
                         if assistant_response:
                             # Check if the response contains unprocessed function calls that need to be handled
                             function_patterns = [
-                                r'<function=(\w+)\{(.*?)\}>',
-                                r'<function=(\w+)\((.*?)\)>',
-                                r'<function=(\w+)\((.*?)\)</function>',
-                                r'function=(\w+)\((.*?)\)',
-                                r'function=(\w+)\{(.*?)\}',
-                                r'<function=([\w-]+)\((.*?)\)</function>'
+                                r'<function=(\w+)\s*\{(.*?)\}>',
+                                r'<function=(\w+)\s*\((.*?)\)>',
+                                r'<function=(\w+)\s*\((.*?)\)</function>',
+                                r'function=(\w+)\s*\((.*?)\)',
+                                r'function=(\w+)\s*\{(.*?)\}',
+                                r'<function=([\w-]+)\s*\((.*?)\)</function>',
+                                r'<function=([\w-]+)\s+(.*?)></function>',
+                                r'<function=([\w-]+)\s+(.*?)></function>',
+                                r'<function=([\w-]+)\s+(.*?)</function>'
                             ]
                             
-                            # Check if response is primarily a function call
-                            contains_function_call = False
+                            # Special case: If the entire response is just a function call
+                            is_just_function_call = False
                             for pattern in function_patterns:
-                                if re.search(pattern, assistant_response):
-                                    contains_function_call = True
+                                if re.match(f'^{pattern}$', assistant_response.strip()):
+                                    is_just_function_call = True
                                     break
+                            
+                            if is_just_function_call:
+                                self.logger.info("Response is only a single function call. Will process and use the result directly.")
+                            
+                            # Check if response contains any function calls (either the entire response or part of it)
+                            contains_function_call = is_just_function_call  # Already true if it's just a function call
+                            if not contains_function_call:
+                                for pattern in function_patterns:
+                                    if re.search(pattern, assistant_response):
+                                        contains_function_call = True
+                                        break
                             
                             if contains_function_call:
                                 # Process the function call ourselves
@@ -172,49 +195,55 @@ class EventHandler:
                                                 
                                                 # Replace the function call with the actual result
                                                 # Try different patterns of replacement based on the original function call format
-                                                if "</function>" in assistant_response:
-                                                    # Full closing tag format
-                                                    pattern_instance = f"<function={tool_name}\\({re.escape(tool_args_str)}\\)</function>"
-                                                    assistant_response = re.sub(pattern_instance, tool_result, assistant_response)
-                                                elif "<function=" in assistant_response:
-                                                    # Opening tag with parentheses
-                                                    pattern_instance = f"<function={tool_name}\\({re.escape(tool_args_str)}\\)>"
-                                                    assistant_response = re.sub(pattern_instance, tool_result, assistant_response)
-                                                    # Opening tag with braces
-                                                    pattern_instance = f"<function={tool_name}\\{{{re.escape(tool_args_str)}\\}}"
-                                                    assistant_response = re.sub(pattern_instance, tool_result, assistant_response)
-                                                else:
-                                                    # Function without brackets
-                                                    pattern_instance = f"function={tool_name}\\({re.escape(tool_args_str)}\\)"
-                                                    assistant_response = re.sub(pattern_instance, tool_result, assistant_response)
-                                                    # Function with braces
-                                                    pattern_instance = f"function={tool_name}\\{{{re.escape(tool_args_str)}\\}}"
-                                                    assistant_response = re.sub(pattern_instance, tool_result, assistant_response)
+                                                old_assistant_response = assistant_response  # Store original response to check if replacement worked
+                                                
+                                                # Try various replacement patterns
+                                                patterns_to_try = [
+                                                    f"<function={tool_name}\\({re.escape(tool_args_str)}\\)</function>",  # Full tag with parentheses
+                                                    f"<function={tool_name}\\{{{re.escape(tool_args_str)}\\}}>",  # Open tag with braces
+                                                    f"<function={tool_name}\\({re.escape(tool_args_str)}\\)>",  # Open tag with parentheses
+                                                    f"<function={tool_name} {re.escape(tool_args_str)}</function>",  # With space separator
+                                                    f"function={tool_name}\\({re.escape(tool_args_str)}\\)",  # No tags with parentheses
+                                                    f"function={tool_name}\\{{{re.escape(tool_args_str)}\\}}"  # No tags with braces
+                                                ]
+                                                
+                                                for pattern_to_try in patterns_to_try:
+                                                    assistant_response = re.sub(pattern_to_try, tool_result, assistant_response)
+                                                
+                                                # If the response didn't change, the function call format might not have matched our patterns
+                                                if assistant_response == old_assistant_response:
+                                                    self.logger.warning(f"Failed to replace function call pattern for: {tool_name}. Using result directly.")
+                                                    # If the response seems to be only the function call, just use the result directly
+                                                    if re.match(r'^<function=.*>$', assistant_response.strip()) or re.match(r'^<function=.*</function>$', assistant_response.strip()) or is_just_function_call:
+                                                        assistant_response = tool_result
+                                                        self.logger.info(f"Using tool result directly: {tool_result[:100]}...")
                                                 
                                             except Exception as e:
                                                 self.logger.error(f"Error processing function call {tool_name}: {e}")
                                                 # Replace function call with error message
                                                 error_msg = f"Error executing {tool_name}: {str(e)}"
                                                 
-                                                # Try different patterns of replacement based on the original function call format
-                                                if "</function>" in assistant_response:
-                                                    # Full closing tag format
-                                                    pattern_instance = f"<function={tool_name}\\({re.escape(tool_args_str)}\\)</function>"
-                                                    assistant_response = re.sub(pattern_instance, error_msg, assistant_response)
-                                                elif "<function=" in assistant_response:
-                                                    # Opening tag with parentheses
-                                                    pattern_instance = f"<function={tool_name}\\({re.escape(tool_args_str)}\\)>"
-                                                    assistant_response = re.sub(pattern_instance, error_msg, assistant_response)
-                                                    # Opening tag with braces
-                                                    pattern_instance = f"<function={tool_name}\\{{{re.escape(tool_args_str)}\\}}"
-                                                    assistant_response = re.sub(pattern_instance, error_msg, assistant_response)
-                                                else:
-                                                    # Function without brackets
-                                                    pattern_instance = f"function={tool_name}\\({re.escape(tool_args_str)}\\)"
-                                                    assistant_response = re.sub(pattern_instance, error_msg, assistant_response)
-                                                    # Function with braces
-                                                    pattern_instance = f"function={tool_name}\\{{{re.escape(tool_args_str)}\\}}"
-                                                    assistant_response = re.sub(pattern_instance, error_msg, assistant_response)
+                                                # Try various replacement patterns
+                                                old_assistant_response = assistant_response
+                                                patterns_to_try = [
+                                                    f"<function={tool_name}\\({re.escape(tool_args_str)}\\)</function>",  # Full tag with parentheses
+                                                    f"<function={tool_name}\\{{{re.escape(tool_args_str)}\\}}>",  # Open tag with braces
+                                                    f"<function={tool_name}\\({re.escape(tool_args_str)}\\)>",  # Open tag with parentheses
+                                                    f"<function={tool_name} {re.escape(tool_args_str)}</function>",  # With space separator
+                                                    f"function={tool_name}\\({re.escape(tool_args_str)}\\)",  # No tags with parentheses
+                                                    f"function={tool_name}\\{{{re.escape(tool_args_str)}\\}}"  # No tags with braces
+                                                ]
+                                                
+                                                for pattern_to_try in patterns_to_try:
+                                                    assistant_response = re.sub(pattern_to_try, error_msg, assistant_response)
+                                                
+                                                # If the response didn't change, the function call format might not have matched our patterns
+                                                if assistant_response == old_assistant_response:
+                                                    self.logger.warning(f"Failed to replace function call pattern for error: {tool_name}. Using error message directly.")
+                                                    # If the response seems to be only the function call, just use the error message directly
+                                                    if re.match(r'^<function=.*>$', assistant_response.strip()) or re.match(r'^<function=.*</function>$', assistant_response.strip()) or is_just_function_call:
+                                                        assistant_response = error_msg
+                                                        self.logger.info(f"Using error message directly: {error_msg}")
                             
                             # Split long messages if needed (Discord has 2000 char limit)
                             if len(assistant_response) <= 2000:
@@ -251,7 +280,7 @@ class EventHandler:
             await self.bot.change_presence(
                 activity=discord.Activity(
                     type=discord.ActivityType.listening, 
-                    name="all messages"
+                    name="@mentions"
                 )
             )
     

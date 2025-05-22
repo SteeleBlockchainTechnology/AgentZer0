@@ -6,6 +6,9 @@ from typing import List, Dict, Any, Optional
 # Groq API client for LLM
 from groq import Groq
 
+# OpenAI client for OpenRouter backup
+from openai import OpenAI
+
 # Import application logger
 from utils.logger import logger
 
@@ -35,13 +38,28 @@ class LanguageModelClient:
             api_key: Optional API key for the Groq API. If not provided,
                     it will be read from the GROQ_API_KEY environment variable.
         """
+        # Initialize Groq client
         self.api_key = api_key or os.environ.get("GROQ_API_KEY")
         if not self.api_key:
             raise ValueError("GROQ_API_KEY environment variable is not set")
-            
+        
         self.llm = Groq(api_key=self.api_key)
         self.logger = logger
         self.model_name = os.environ.get("GROQ_MODEL", "llama-3-8b-8192")
+        
+        # Initialize OpenRouter client as backup
+        self.openrouter_api_key = os.environ.get("OPEN_ROUTER_API_KEY")
+        self.openrouter_model = os.environ.get("OPEN_ROUTER_MODEL", "deepseek/deepseek-chat-v3-0324:free")
+        
+        if self.openrouter_api_key:
+            self.logger.info(f"OpenRouter backup LLM configured with model: {self.openrouter_model}")
+            self.openrouter_client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=self.openrouter_api_key,
+            )
+        else:
+            self.logger.warning("OPEN_ROUTER_API_KEY not set. No backup LLM available.")
+            self.openrouter_client = None
     
     def create_system_message(self, tool_names: List[str] = None) -> Dict[str, str]:
         """Create the system message with appropriate instructions
@@ -188,8 +206,44 @@ class LanguageModelClient:
                 
                 self.logger.info(f"Providing {len(formatted_tools)} tools to LLM")
             
-            # Call the Groq API
-            response = self.llm.chat.completions.create(**params)
+            # Try Groq API first
+            try:
+                # Call the Groq API
+                response = self.llm.chat.completions.create(**params)
+                self.logger.info("Successfully used Groq API")
+            except Exception as groq_error:
+                self.logger.warning(f"Groq API error: {groq_error}. Trying OpenRouter backup.")
+                
+                # Fall back to OpenRouter if Groq fails and OpenRouter is configured
+                if self.openrouter_client:
+                    try:
+                        # Convert parameters for OpenRouter
+                        openrouter_params = {
+                            "model": self.openrouter_model,
+                            "max_tokens": max_tokens,
+                            "messages": messages_copy,
+                            "temperature": 0.7,
+                            "extra_headers": {
+                                "HTTP-Referer": "https://agentzer0.ai",
+                                "X-Title": "AgentZer0",
+                            }
+                        }
+                        
+                        # Add tools if available
+                        if formatted_tools:
+                            openrouter_params["tools"] = formatted_tools
+                            openrouter_params["tool_choice"] = "auto"
+                        
+                        # Call OpenRouter API
+                        response = self.openrouter_client.chat.completions.create(**openrouter_params)
+                        self.logger.info("Successfully used OpenRouter API as backup")
+                    except Exception as openrouter_error:
+                        self.logger.error(f"OpenRouter API error: {openrouter_error}")
+                        # Re-raise the original Groq error if OpenRouter also fails
+                        raise groq_error
+                else:
+                    # No backup available, re-raise the original error
+                    raise
             
             # Log a warning if we get an empty response but don't modify it
             if (not response.choices[0].message.content or 
