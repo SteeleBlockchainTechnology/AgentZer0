@@ -10,6 +10,21 @@ from groq import Groq
 from utils.logger import logger
 
 
+# Custom JSON encoder to handle Groq objects
+class GroqEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles Groq API objects"""
+    def default(self, obj):
+        # Handle tool calls and function objects from Groq
+        if hasattr(obj, "__dict__"):
+            return obj.__dict__
+        
+        # For other types that can't be serialized
+        try:
+            return str(obj)
+        except:
+            return "[Object not serializable]"
+
+
 class LanguageModelClient:
     """Client for interacting with the Groq Language Model"""
     
@@ -45,13 +60,11 @@ class LanguageModelClient:
         
         if tool_names:
             content += (
-                f"You have access to the following web3-research-mcp tools: {available_tools_str}. "
-                "These tools can help you gather information about cryptocurrency tokens, market data, and blockchain projects. "
-                "To use tools, format your response like this: <function=tool_name{\"param\":\"value\"}>. "
-                "For example, to search for bitcoin price, use: <function=search{\"query\":\"bitcoin price\",\"searchType\":\"web\"}>. "
-                "Always include explanatory text along with any function calls. "
-                f"IMPORTANT: ONLY use the specific tool names listed above: {available_tools_str}. "
-                "Do not invent or try to use tools that aren't in this list."
+                f"You have access to the following tools: {available_tools_str}. "
+                "These tools can help you gather real-time information about cryptocurrency tokens, market data, and blockchain projects. "
+                "ALWAYS use available tools when asked about current cryptocurrency prices or market data. "
+                "Do not respond with disclaimers about not having real-time data - use the provided tools instead. "
+                f"ONLY use the specific tool names listed above: {available_tools_str}. "
             )
         
         return {"role": "system", "content": content}
@@ -79,42 +92,81 @@ class LanguageModelClient:
             # Make a copy to avoid modifying the original
             messages_copy = messages.copy()
             
+            # Check if query is about crypto prices
+            is_price_query = False
+            price_related_terms = ["price", "worth", "value", "cost", "bitcoin", "btc", "eth", "crypto"]
+            
+            # Check last user message for price-related content
+            for message in reversed(messages_copy):
+                if message.get("role") == "user":
+                    user_query = message.get("content", "").lower()
+                    if any(term in user_query for term in price_related_terms):
+                        is_price_query = True
+                        self.logger.info(f"Detected price-related query: {user_query}")
+                    break
+            
             # Get list of tool names if tools are provided
             tool_names = [tool["name"] for tool in (tools or [])]
             
-            # Add or update system message
+            # Determine if we have any price-related tools
+            has_price_tools = any("price" in tool.lower() or "crypto" in tool.lower() for tool in tool_names)
+            
+            # Add or update system message with appropriate tools guidance
             if not any(msg.get("role") == "system" for msg in messages_copy):
                 # Add system message if not present
                 system_message = self.create_system_message(tool_names)
-                messages_copy.insert(0, system_message)
-            
-            # Check if last few messages were about tools and crypto prices/info
-            # If so, encourage function calls more explicitly
-            should_encourage_tools = False
-            if len(messages_copy) >= 3 and tools:
-                last_user_msg = None
-                for msg in reversed(messages_copy):
-                    if msg.get("role") == "user":
-                        last_user_msg = msg.get("content", "").lower()
-                        break
                 
-                if last_user_msg and any(term in last_user_msg for term in 
-                                      ["price", "bitcoin", "btc", "eth", "crypto", "token", "coin"]):
-                    should_encourage_tools = True
-            
-            if should_encourage_tools:
-                # Add a reminder to use function calls if appropriate
+                # If it's a price query and we have price tools, add stronger instruction
+                if is_price_query and has_price_tools:
+                    system_message["content"] += (
+                        " For this cryptocurrency price query, you MUST use available tools like bitcoin_price "
+                        "or get_crypto_price to fetch real-time data instead of saying you don't have access to "
+                        "current prices. Do not respond with general information about checking prices elsewhere."
+                    )
+                
+                messages_copy.insert(0, system_message)
+            else:
+                # Update existing system message
                 for i, msg in enumerate(messages_copy):
                     if msg.get("role") == "system":
-                        messages_copy[i]["content"] += (
-                            " For queries about cryptocurrency prices or market data, "
-                            "please use the search tool or other available tools to get real-time information. "
-                            "Always use <function=tool_name{...}> syntax when appropriate."
-                        )
+                        updated_message = self.create_system_message(tool_names)
+                        
+                        # If it's a price query and we have price tools, add stronger instruction
+                        if is_price_query and has_price_tools:
+                            updated_message["content"] += (
+                                " For this cryptocurrency price query, you MUST use available tools like bitcoin_price "
+                                "or get_crypto_price to fetch real-time data instead of saying you don't have access to "
+                                "current prices. Do not respond with general information about checking prices elsewhere."
+                            )
+                        
+                        messages_copy[i] = updated_message
                         break
             
-            # Log the final messages for debugging
-            self.logger.info(f"Sending messages to LLM: {json.dumps(messages_copy, indent=2)}")
+            # Format tools for API call
+            formatted_tools = None
+            if tools:
+                formatted_tools = []
+                for tool in tools:
+                    formatted_tool = {
+                        "type": "function",
+                        "function": {
+                            "name": tool["name"],
+                            "description": tool.get("description", f"Tool for {tool['name']}"),
+                        }
+                    }
+                    
+                    # Add parameter schema if available
+                    if "input_schema" in tool:
+                        formatted_tool["function"]["parameters"] = tool["input_schema"]
+                    
+                    formatted_tools.append(formatted_tool)
+            
+            # Log the final messages for debugging - use custom encoder for Groq objects
+            try:
+                self.logger.info(f"Sending messages to LLM: {json.dumps(messages_copy, indent=2, cls=GroqEncoder)}")
+            except Exception as e:
+                self.logger.warning(f"Could not serialize messages for logging: {e}")
+                self.logger.info(f"Sending {len(messages_copy)} messages to LLM")
             
             # Prepare parameters for the API call
             params = {
@@ -124,8 +176,30 @@ class LanguageModelClient:
                 "temperature": 0.7,
             }
             
-            # Explicitly do NOT add tools parameter to the API call
-            # Instead, we'll rely on the function call format in the prompt
+            # Add tools parameter to the API call if available
+            if formatted_tools:
+                params["tools"] = formatted_tools
+                
+                # For price queries with price tools available, force tool usage
+                if is_price_query and has_price_tools:
+                    # Find appropriate tool to use
+                    price_tools = [tool for tool in formatted_tools 
+                                  if "bitcoin" in tool["function"]["name"].lower() or 
+                                     "price" in tool["function"]["name"].lower() or
+                                     "crypto" in tool["function"]["name"].lower()]
+                    
+                    if price_tools:
+                        # Force the model to use a specific tool for price queries
+                        params["tool_choice"] = {"type": "function", "function": {"name": price_tools[0]["function"]["name"]}}
+                        self.logger.info(f"Forcing usage of tool: {price_tools[0]['function']['name']} for price query")
+                    else:
+                        # If no specific price tool found but we have tools, set to auto
+                        params["tool_choice"] = "auto"
+                else:
+                    # Set tool_choice to auto to allow model to choose when to use tools
+                    params["tool_choice"] = "auto"
+                
+                self.logger.info(f"Providing {len(formatted_tools)} tools to LLM")
             
             # Call the Groq API
             response = self.llm.chat.completions.create(**params)
@@ -135,14 +209,41 @@ class LanguageModelClient:
                 response.choices[0].message.content.strip() == ""):
                 self.logger.warning("Received empty response from LLM. This may indicate an issue with the model or the prompt.")
             
-            # Check if response contains function call format
+            # Log the response for debugging - use custom encoder for safe logging
             content = response.choices[0].message.content or ""
-            if "<function=" not in content and should_encourage_tools:
-                # If expected to use tools but didn't, log a warning
-                self.logger.warning("LLM response did not include function calls despite the topic being appropriate for tools.")
+            self.logger.info(f"LLM response: {content}")
             
-            # Log the response for debugging
-            self.logger.info(f"LLM response: {response.choices[0].message.content}")
+            # Check if response contains tool calls
+            if hasattr(response.choices[0].message, "tool_calls") and response.choices[0].message.tool_calls:
+                try:
+                    # Use custom encoder for safe logging - but avoid directly logging objects
+                    tool_calls_info = []
+                    for tool_call in response.choices[0].message.tool_calls:
+                        try:
+                            tool_info = {
+                                "id": getattr(tool_call, "id", "unknown"),
+                                "name": getattr(tool_call.function, "name", "unknown"),
+                                "arguments": getattr(tool_call.function, "arguments", "{}")
+                            }
+                            tool_calls_info.append(tool_info)
+                        except Exception:
+                            tool_calls_info.append("Error extracting tool call info")
+                    
+                    self.logger.info(f"LLM response includes tool calls: {json.dumps(tool_calls_info)}")
+                except Exception as e:
+                    self.logger.info(f"LLM response includes tool calls but couldn't serialize for logging: {e}")
+                
+                # Add tool call indicators to the response content
+                for tool_call in response.choices[0].message.tool_calls:
+                    try:
+                        function_name = tool_call.function.name
+                        function_args = tool_call.function.arguments
+                        content += f"\n<function={function_name}{function_args}>"
+                    except Exception as e:
+                        self.logger.warning(f"Error formatting tool call for content: {e}")
+                
+                # Update the response content
+                response.choices[0].message.content = content
             
             return response
             

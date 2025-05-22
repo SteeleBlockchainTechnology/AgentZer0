@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "coincap-mcp": "^0.9.3"
+  }
+}

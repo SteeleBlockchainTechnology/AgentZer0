@@ -89,8 +89,9 @@ class EventHandler:
                         current_mcp_client_instance = MCPClient()
 
                         self.logger.info(f"Connecting new MCPClient instance for query: {query}")
-                        if not await current_mcp_client_instance.connect_to_server():
-                            self.logger.error(f"Failed to connect new MCPClient for query: {query}")
+                        # Initialize all servers and tools, not just connecting to a single server
+                        if not await current_mcp_client_instance.initialize_servers():
+                            self.logger.error(f"Failed to initialize MCPClient servers for query: {query}")
                             await message.reply("Sorry, I couldn't connect to my core services to process your request.")
                             return
 

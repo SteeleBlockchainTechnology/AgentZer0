@@ -31,17 +31,17 @@ async def lifespan(app: FastAPI):
         print(f"DISCORD_TOKEN set: {'Yes' if os.environ.get('DISCORD_TOKEN') else 'No'}")
         print("==================================================\n")
         
-        # Connect to the web3-research-mcp server using npx
-        print("Connecting to web3-research-mcp server...")
+        # Connect to MCP servers using settings from config
+        print("Connecting to MCP servers...")
         try:
-            # Call connect_to_server without parameters to use settings from config
-            connected = await client.connect_to_server()
+            # Initialize all configured MCP servers
+            connected = await client.initialize_servers()
             if not connected:
-                print("Failed to connect to web3-research-mcp server")
+                print("Failed to connect to any MCP servers")
                 raise HTTPException(
-                    status_code=500, detail="Failed to connect to MCP server"
+                    status_code=500, detail="Failed to connect to any MCP servers"
                 )
-            print("Successfully connected to web3-research-mcp server!")
+            print("Successfully connected to MCP servers!")
         except Exception as e:
             print(f"Error connecting to MCP server: {e}")
             traceback.print_exc()
