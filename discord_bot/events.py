@@ -105,6 +105,117 @@ class EventHandler:
                         assistant_response = self._get_latest_assistant_message(response_messages)
                         
                         if assistant_response:
+                            # Check if the response contains unprocessed function calls that need to be handled
+                            function_patterns = [
+                                r'<function=(\w+)\{(.*?)\}>',
+                                r'<function=(\w+)\((.*?)\)>',
+                                r'<function=(\w+)\((.*?)\)</function>',
+                                r'function=(\w+)\((.*?)\)',
+                                r'function=(\w+)\{(.*?)\}',
+                                r'<function=([\w-]+)\((.*?)\)</function>'
+                            ]
+                            
+                            # Check if response is primarily a function call
+                            contains_function_call = False
+                            for pattern in function_patterns:
+                                if re.search(pattern, assistant_response):
+                                    contains_function_call = True
+                                    break
+                            
+                            if contains_function_call:
+                                # Process the function call ourselves
+                                self.logger.info("Response contains unprocessed function calls. Processing them now.")
+                                self.logger.info(f"Original response: {assistant_response}")
+                                
+                                # Create a new query with just the function call to ensure it's processed properly
+                                for pattern in function_patterns:
+                                    matches = re.findall(pattern, assistant_response)
+                                    
+                                    if matches:
+                                        self.logger.info(f"Found matches with pattern {pattern}: {matches}")
+                                        for tool_name, tool_args_str in matches:
+                                            try:
+                                                # Process the function call
+                                                self.logger.info(f"Executing function call: {tool_name} with args {tool_args_str}")
+                                                
+                                                # Fix common formatting issues in args
+                                                if tool_args_str.startswith("{"): 
+                                                    # Already valid JSON format
+                                                    pass
+                                                elif tool_args_str.startswith("\"") or tool_args_str.startswith("'"):
+                                                    # String that might need wrapping
+                                                    tool_args_str = "{\"query\": " + tool_args_str + "}"
+                                                else:
+                                                    # Wrap in curly braces if not already present
+                                                    tool_args_str = '{' + tool_args_str + '}'
+                                                
+                                                # Clean up any potential issues
+                                                tool_args_str = tool_args_str.replace("\\\"", "\"").replace("\\\'", "'")
+                                                
+                                                # Try to parse the arguments
+                                                try:
+                                                    tool_args = json.loads(tool_args_str)
+                                                except json.JSONDecodeError as e:
+                                                    # Try to fix common JSON syntax errors
+                                                    fixed_str = re.sub(r'(\w+):', r'"\1":', tool_args_str)
+                                                    tool_args = json.loads(fixed_str)
+                                                
+                                                # Find which server has this tool
+                                                result = await current_mcp_client_instance.servers[current_mcp_client_instance._find_server_for_tool(tool_name)]["session"].call_tool(tool_name, tool_args)
+                                                
+                                                # Format the result
+                                                tool_result = current_mcp_client_instance._format_tool_result(result.content)
+                                                
+                                                # If this is a research result, format it nicely
+                                                if tool_name.startswith("research-") and isinstance(tool_result, str):
+                                                    tool_result = self._format_research_result(tool_result)
+                                                
+                                                # Replace the function call with the actual result
+                                                # Try different patterns of replacement based on the original function call format
+                                                if "</function>" in assistant_response:
+                                                    # Full closing tag format
+                                                    pattern_instance = f"<function={tool_name}\\({re.escape(tool_args_str)}\\)</function>"
+                                                    assistant_response = re.sub(pattern_instance, tool_result, assistant_response)
+                                                elif "<function=" in assistant_response:
+                                                    # Opening tag with parentheses
+                                                    pattern_instance = f"<function={tool_name}\\({re.escape(tool_args_str)}\\)>"
+                                                    assistant_response = re.sub(pattern_instance, tool_result, assistant_response)
+                                                    # Opening tag with braces
+                                                    pattern_instance = f"<function={tool_name}\\{{{re.escape(tool_args_str)}\\}}"
+                                                    assistant_response = re.sub(pattern_instance, tool_result, assistant_response)
+                                                else:
+                                                    # Function without brackets
+                                                    pattern_instance = f"function={tool_name}\\({re.escape(tool_args_str)}\\)"
+                                                    assistant_response = re.sub(pattern_instance, tool_result, assistant_response)
+                                                    # Function with braces
+                                                    pattern_instance = f"function={tool_name}\\{{{re.escape(tool_args_str)}\\}}"
+                                                    assistant_response = re.sub(pattern_instance, tool_result, assistant_response)
+                                                
+                                            except Exception as e:
+                                                self.logger.error(f"Error processing function call {tool_name}: {e}")
+                                                # Replace function call with error message
+                                                error_msg = f"Error executing {tool_name}: {str(e)}"
+                                                
+                                                # Try different patterns of replacement based on the original function call format
+                                                if "</function>" in assistant_response:
+                                                    # Full closing tag format
+                                                    pattern_instance = f"<function={tool_name}\\({re.escape(tool_args_str)}\\)</function>"
+                                                    assistant_response = re.sub(pattern_instance, error_msg, assistant_response)
+                                                elif "<function=" in assistant_response:
+                                                    # Opening tag with parentheses
+                                                    pattern_instance = f"<function={tool_name}\\({re.escape(tool_args_str)}\\)>"
+                                                    assistant_response = re.sub(pattern_instance, error_msg, assistant_response)
+                                                    # Opening tag with braces
+                                                    pattern_instance = f"<function={tool_name}\\{{{re.escape(tool_args_str)}\\}}"
+                                                    assistant_response = re.sub(pattern_instance, error_msg, assistant_response)
+                                                else:
+                                                    # Function without brackets
+                                                    pattern_instance = f"function={tool_name}\\({re.escape(tool_args_str)}\\)"
+                                                    assistant_response = re.sub(pattern_instance, error_msg, assistant_response)
+                                                    # Function with braces
+                                                    pattern_instance = f"function={tool_name}\\{{{re.escape(tool_args_str)}\\}}"
+                                                    assistant_response = re.sub(pattern_instance, error_msg, assistant_response)
+                            
                             # Split long messages if needed (Discord has 2000 char limit)
                             if len(assistant_response) <= 2000:
                                 await message.reply(assistant_response)
@@ -158,6 +269,42 @@ class EventHandler:
             if msg.get("role") == "assistant" and isinstance(msg.get("content"), str):
                 return msg.get("content", "")
         return ""
+    
+    def _format_research_result(self, content: str) -> str:
+        """Format research results to be more readable
+        
+        Args:
+            content: The research result content
+            
+        Returns:
+            str: Formatted research result
+        """
+        if "search results" in content.lower():
+            # Try to identify and format JSON search results
+            try:
+                parts = content.split("Search results:", 1)
+                if len(parts) > 1:
+                    header = parts[0].strip()
+                    json_str = parts[1].strip()
+                    
+                    # Try to parse JSON
+                    import json
+                    results = json.loads(json_str)
+                    
+                    # Format results nicely
+                    formatted = f"{header}\n\n**Search Results:**\n\n"
+                    for i, result in enumerate(results):
+                        formatted += f"{i+1}. **{result.get('title', 'Unknown')}**\n"
+                        formatted += f"   {result.get('description', '')}\n"
+                        formatted += f"   Source: {result.get('hostname', '')}\n"
+                        formatted += f"   URL: {result.get('url', '')}\n\n"
+                    
+                    return formatted
+            except Exception:
+                # If parsing fails, return original content
+                pass
+        
+        return content
 
 
 def setup(bot, mcp_client: MCPClient):

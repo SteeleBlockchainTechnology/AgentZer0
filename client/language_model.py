@@ -62,9 +62,12 @@ class LanguageModelClient:
             content += (
                 f"You have access to the following tools: {available_tools_str}. "
                 "These tools can help you gather real-time information about cryptocurrency tokens, market data, and blockchain projects. "
-                "ALWAYS use available tools when asked about current cryptocurrency prices or market data. "
-                "Do not respond with disclaimers about not having real-time data - use the provided tools instead. "
-                f"ONLY use the specific tool names listed above: {available_tools_str}. "
+                "When asked about cryptocurrency prices or market data, ALWAYS use the appropriate tools to fetch real-time information. "
+                "For research queries about tokens, use research-related tools like research-token, research-source, or search. "
+                "Return the research results even if price data is unavailable. "
+                "Do not respond with disclaimers about not having real-time data when tools are available. "
+                f"Only use the specific tool names listed above: {available_tools_str}. "
+                "When calling tools, follow the exact format of tool_calls. Do not use text-based function calls or alternative formats. "
             )
         
         return {"role": "system", "content": content}
@@ -116,12 +119,12 @@ class LanguageModelClient:
                 # Add system message if not present
                 system_message = self.create_system_message(tool_names)
                 
-                # If it's a price query and we have price tools, add stronger instruction
+                # If it's a price query and we have price tools, add helpful instruction
                 if is_price_query and has_price_tools:
                     system_message["content"] += (
-                        " For this cryptocurrency price query, you MUST use available tools like bitcoin_price "
-                        "or get_crypto_price to fetch real-time data instead of saying you don't have access to "
-                        "current prices. Do not respond with general information about checking prices elsewhere."
+                        " For this cryptocurrency price query, consider using tools like get-price "
+                        "or other available tools to fetch real-time data. This will provide more accurate "
+                        "and up-to-date information than general responses."
                     )
                 
                 messages_copy.insert(0, system_message)
@@ -131,12 +134,12 @@ class LanguageModelClient:
                     if msg.get("role") == "system":
                         updated_message = self.create_system_message(tool_names)
                         
-                        # If it's a price query and we have price tools, add stronger instruction
+                        # If it's a price query and we have price tools, add helpful instruction
                         if is_price_query and has_price_tools:
                             updated_message["content"] += (
-                                " For this cryptocurrency price query, you MUST use available tools like bitcoin_price "
-                                "or get_crypto_price to fetch real-time data instead of saying you don't have access to "
-                                "current prices. Do not respond with general information about checking prices elsewhere."
+                                " For this cryptocurrency price query, consider using tools like get-price "
+                                "or other available tools to fetch real-time data. This will provide more accurate "
+                                "and up-to-date information than general responses."
                             )
                         
                         messages_copy[i] = updated_message
@@ -180,24 +183,8 @@ class LanguageModelClient:
             if formatted_tools:
                 params["tools"] = formatted_tools
                 
-                # For price queries with price tools available, force tool usage
-                if is_price_query and has_price_tools:
-                    # Find appropriate tool to use
-                    price_tools = [tool for tool in formatted_tools 
-                                  if "bitcoin" in tool["function"]["name"].lower() or 
-                                     "price" in tool["function"]["name"].lower() or
-                                     "crypto" in tool["function"]["name"].lower()]
-                    
-                    if price_tools:
-                        # Force the model to use a specific tool for price queries
-                        params["tool_choice"] = {"type": "function", "function": {"name": price_tools[0]["function"]["name"]}}
-                        self.logger.info(f"Forcing usage of tool: {price_tools[0]['function']['name']} for price query")
-                    else:
-                        # If no specific price tool found but we have tools, set to auto
-                        params["tool_choice"] = "auto"
-                else:
-                    # Set tool_choice to auto to allow model to choose when to use tools
-                    params["tool_choice"] = "auto"
+                # Always let the model decide which tool to use
+                params["tool_choice"] = "auto"
                 
                 self.logger.info(f"Providing {len(formatted_tools)} tools to LLM")
             

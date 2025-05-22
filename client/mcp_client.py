@@ -238,9 +238,10 @@ class MCPClient:
             
             # Track if we've had a failed tool call
             had_tool_failure = False
+            have_function_text = False
             
             # Start conversation loop
-            max_iterations = 3  # Limit iterations to avoid infinite loops
+            max_iterations = 15  # Limit iterations to avoid infinite loops
             for iteration in range(max_iterations):
                 try:
                     # Call LLM for response
@@ -252,40 +253,263 @@ class MCPClient:
                     # Extract content from response
                     assistant_content = response.choices[0].message.content or ""
                     
-                    # Check if the response has official tool calls
-                    has_tool_calls = False
-                    if hasattr(response.choices[0].message, "tool_calls") and response.choices[0].message.tool_calls:
-                        has_tool_calls = True
+                    # Check if the response is just a function call
+                    function_patterns = [
+                        r'^<function=(\w+)\{(.*?)\}>$',
+                        r'^<function=(\w+)\((.*?)\)>$',
+                        r'^<function=(\w+)\((.*?)\)</function>$',
+                        r'^function=(\w+)\((.*?)\)',
+                        r'^function=(\w+)\{(.*?)\}'
+                    ]
+                    
+                    is_just_function_text = False
+                    for pattern in function_patterns:
+                        if re.match(pattern, assistant_content.strip()):
+                            is_just_function_text = True
+                            have_function_text = True
+                            self.logger.info(f"Response appears to be just a function call: {assistant_content}")
+                            break
+                    
+                    # If the response is just a function call, skip adding it as a message
+                    if is_just_function_text:
+                        self.logger.info("Not adding function call text as a message, processing as a tool call instead")
+                    else:
+                        # Check if the response has official tool calls
+                        has_tool_calls = False
+                        if hasattr(response.choices[0].message, "tool_calls") and response.choices[0].message.tool_calls:
+                            has_tool_calls = True
+                            
+                            # Create a clean version of the assistant message without tool calls embedded in content
+                            clean_content = re.sub(r'<function=\w+\{.*?\}>', '', assistant_content).strip()
+                            
+                            # If we've had tool failures, only add the content to avoid API errors
+                            if had_tool_failure:
+                                assistant_message = {
+                                    "role": "assistant", 
+                                    "content": clean_content or "I'll try to get that information for you."
+                                }
+                            else:
+                                # First tool call - include the tool calls in the message
+                                assistant_message = {
+                                    "role": "assistant",
+                                    "content": clean_content,
+                                    "tool_calls": response.choices[0].message.tool_calls
+                                }
+                            
+                            self.messages.append(assistant_message)
+                            await self.log_conversation()
+                            
+                            # Process each tool call
+                            all_tools_succeeded = True
+                            have_successful_results = False
+                            
+                            for tool_call in response.choices[0].message.tool_calls:
+                                tool_name = tool_call.function.name
+                                try:
+                                    # Parse the arguments
+                                    tool_args_str = tool_call.function.arguments
+                                    
+                                    # Fix common formatting issues
+                                    if tool_args_str.startswith("{"): 
+                                        # Already valid JSON format
+                                        pass
+                                    elif tool_args_str.startswith("\"") or tool_args_str.startswith("'"):
+                                        # String that might need wrapping
+                                        tool_args_str = "{\"query\": " + tool_args_str + "}"
+                                    else:
+                                        # Wrap in curly braces if not already present
+                                        tool_args_str = '{' + tool_args_str + '}'
+                                    
+                                    # Clean up any potential issues
+                                    tool_args_str = tool_args_str.replace("\\\"", "\"").replace("\\\'", "'")
+                                    
+                                    # Try to parse the arguments 
+                                    try:
+                                        tool_args = json.loads(tool_args_str)
+                                    except json.JSONDecodeError as e:
+                                        # If parsing fails, try fixing common JSON syntax errors
+                                        self.logger.warning(f"Failed to parse tool args: {e}. Attempting to fix.")
+                                        # Try to add quotes around unquoted keys
+                                        fixed_str = re.sub(r'(\w+):', r'"\1":', tool_args_str)
+                                        tool_args = json.loads(fixed_str)
+                                    
+                                    # Find which server has this tool
+                                    server_name = self._find_server_for_tool(tool_name)
+                                    if not server_name:
+                                        raise ValueError(f"Tool '{tool_name}' not found in any connected server")
+                                    
+                                    # Call the tool on the appropriate server
+                                    self.logger.info(f"Calling tool {tool_name} on server '{server_name}' with args {tool_args}")
+                                    session = self.servers[server_name]["session"]
+                                    
+                                    try:
+                                        result = await session.call_tool(tool_name, tool_args)
+                                        # Format tool result
+                                        content = self._format_tool_result(result.content)
+                                        self.logger.info(f"Tool {tool_name} on server '{server_name}' result received: {content[:100] if content else 'Empty'}...")
+                                        
+                                        # Check if we got a successful price or other useful data
+                                        if content and not content.startswith("Error") and (
+                                            ("price" in content.lower()) or 
+                                            ("Current price" in content) or 
+                                            ("value" in content.lower() and any(crypto in content.lower() for crypto in ["btc", "bitcoin", "eth", "ethereum", "bnb", "sol", "solana", "xrp"])) or
+                                            ("search results" in content.lower()) or
+                                            ("research" in content.lower())
+                                        ):
+                                            have_successful_results = True
+                                            self.logger.info(f"Successfully retrieved data: {content[:100]}...")
+                                            
+                                    except Exception as tool_error:
+                                        self.logger.error(f"Error executing tool {tool_name}: {tool_error}")
+                                        # Handle tool execution error specifically
+                                        content = f"Error: The {tool_name} tool encountered an error. Please try a different approach. Error details: {str(tool_error)}"
+                                        all_tools_succeeded = False
+                                    
+                                    # After first iteration with failed tools, don't include tool_call_id in further messages
+                                    if had_tool_failure:
+                                        tool_result_message = {
+                                            "role": "user",
+                                            "content": f"Tool {tool_name} returned: {content}"
+                                        }
+                                    else:
+                                        # First attempt - include proper tool format
+                                        tool_result_message = {
+                                            "role": "tool",
+                                            "tool_call_id": tool_call.id,
+                                            "name": tool_name,
+                                            "content": content
+                                        }
+                                    
+                                    self.messages.append(tool_result_message)
+                                    await self.log_conversation()
+                                except Exception as e:
+                                    self.logger.error(f"Error handling tool call {tool_name}: {e}")
+                                    all_tools_succeeded = False
+                                    
+                                    # After first iteration with failed tools, don't include tool_call_id in further messages
+                                    if had_tool_failure:
+                                        tool_error_message = {
+                                            "role": "user",
+                                            "content": f"Error using tool {tool_name}: {str(e)}"
+                                        }
+                                    else:
+                                        # First attempt - include proper tool format
+                                        tool_error_message = {
+                                            "role": "tool",
+                                            "tool_call_id": tool_call.id,
+                                            "name": tool_name,
+                                            "content": f"Error: {str(e)}"
+                                        }
+                                    
+                                    self.messages.append(tool_error_message)
+                                    await self.log_conversation()
+                            
+                            # Update tool failure flag
+                            if not all_tools_succeeded:
+                                had_tool_failure = True
+                                
+                            # If we have successful results, create a final answer
+                            if have_successful_results:
+                                # Get the most recent successful tool result
+                                successful_result = None
+                                for msg in reversed(self.messages):
+                                    if msg.get("role") == "tool" and "Error" not in msg.get("content", ""):
+                                        successful_result = msg.get("content")
+                                        break
+                                
+                                if successful_result:
+                                    # Generate a final response with the data we found
+                                    final_response = {
+                                        "role": "assistant",
+                                        "content": successful_result
+                                    }
+                                    self.messages.append(final_response)
+                                    self.logger.info(f"Breaking loop with successful result: {successful_result}")
+                                    break
+                            
+                            # Continue the conversation if there were tool calls
+                            continue
                         
-                        # Create a clean version of the assistant message without tool calls embedded in content
-                        clean_content = re.sub(r'<function=\w+\{.*?\}>', '', assistant_content).strip()
+                        # Check for function calls in text - whether we added a message or not
+                        function_matches = []
                         
-                        # If we've had tool failures, only add the content to avoid API errors
-                        if had_tool_failure:
-                            assistant_message = {
-                                "role": "assistant", 
-                                "content": clean_content or "I'll try to get that information for you."
-                            }
-                        else:
-                            # First tool call - include the tool calls in the message
+                        # Only check for traditional function matches if we don't have official tool calls
+                        # Or if the response is just a function text
+                        if not has_tool_calls or is_just_function_text:
+                            # Try different function call patterns
+                            patterns = [
+                                r'<function=(\w+)\{(.*?)\}>', # Original format
+                                r'<function=(\w+)\((.*?)\)>', # Format with parentheses
+                                r'<function=(\w+)\((.*?)\)</function>', # Format with closing tag
+                                r'function=(\w+)\((.*?)\)', # Format without brackets
+                                r'function=(\w+)\{(.*?)\}', # Format without brackets with curly braces
+                            ]
+                            
+                            for pattern in patterns:
+                                matches = re.findall(pattern, assistant_content)
+                                if matches:
+                                    function_matches.extend(matches)
+                                    self.logger.info(f"Found function call using pattern {pattern}: {matches}")
+                        
+                        # If no function calls are found, add the assistant message and break
+                        if not function_matches:
+                            # Only add a message if we haven't already added one
+                            if not is_just_function_text:
+                                assistant_message = {
+                                    "role": "assistant",
+                                    "content": assistant_content,
+                                }
+                                self.messages.append(assistant_message)
+                                await self.log_conversation()
+                            break
+                        
+                        # Add the assistant message with the function call only if we haven't identified it as just a function call
+                        if not is_just_function_text:
                             assistant_message = {
                                 "role": "assistant",
-                                "content": clean_content,
-                                "tool_calls": response.choices[0].message.tool_calls
+                                "content": assistant_content,
                             }
+                            self.messages.append(assistant_message)
+                            await self.log_conversation()
                         
-                        self.messages.append(assistant_message)
-                        await self.log_conversation()
-                        
-                        # Process each tool call
+                        # Process each function call from text
                         all_tools_succeeded = True
                         have_successful_results = False
                         
-                        for tool_call in response.choices[0].message.tool_calls:
-                            tool_name = tool_call.function.name
+                        for tool_name, tool_args_str in function_matches:
+                            self.logger.info(f"Processing text function call: {tool_name} with args {tool_args_str}")
+                            
                             try:
-                                # Parse the arguments
-                                tool_args = json.loads(tool_call.function.arguments)
+                                # Handle the tool call logic
+                                # Parse arguments, find server, execute tool call, etc.
+                                # [Code to process the function call]
+                                
+                                # Parse the JSON arguments - ensure proper formatting
+                                tool_args_str = tool_args_str.strip()
+                                
+                                # Fix common formatting issues
+                                if tool_args_str.startswith("{"): 
+                                    # Already valid JSON format
+                                    pass
+                                elif tool_args_str.startswith("\"") or tool_args_str.startswith("'"):
+                                    # String that might need wrapping
+                                    tool_args_str = "{\"query\": " + tool_args_str + "}"
+                                else:
+                                    # Wrap in curly braces if not already present
+                                    tool_args_str = '{' + tool_args_str + '}'
+                                
+                                # Clean up any potential issues
+                                tool_args_str = tool_args_str.replace("\\\"", "\"").replace("\\\'", "'")
+                                
+                                # Try to parse the arguments 
+                                try:
+                                    tool_args = json.loads(tool_args_str)
+                                except json.JSONDecodeError as e:
+                                    # If parsing fails, try fixing common JSON syntax errors
+                                    self.logger.warning(f"Failed to parse tool args: {e}. Attempting to fix.")
+                                    # Try to add quotes around unquoted keys
+                                    fixed_str = re.sub(r'(\w+):', r'"\1":', tool_args_str)
+                                    tool_args = json.loads(fixed_str)
                                 
                                 # Find which server has this tool
                                 server_name = self._find_server_for_tool(tool_name)
@@ -302,147 +526,37 @@ class MCPClient:
                                     content = self._format_tool_result(result.content)
                                     self.logger.info(f"Tool {tool_name} on server '{server_name}' result received: {content[:100] if content else 'Empty'}...")
                                     
-                                    # Check if we got a successful price or other useful data
-                                    if content and not content.startswith("Error") and (("price" in content.lower()) or ("Current price" in content)):
+                                    # Check if we got a successful result
+                                    if content and not content.startswith("Error"):
                                         have_successful_results = True
                                         self.logger.info(f"Successfully retrieved data: {content}")
-                                        
+                                    
                                 except Exception as tool_error:
                                     self.logger.error(f"Error executing tool {tool_name}: {tool_error}")
                                     # Handle tool execution error specifically
                                     content = f"Error: The {tool_name} tool encountered an error. Please try a different approach. Error details: {str(tool_error)}"
                                     all_tools_succeeded = False
                                 
-                                # After first iteration with failed tools, don't include tool_call_id in further messages
-                                if had_tool_failure:
-                                    tool_result_message = {
-                                        "role": "user",
-                                        "content": f"Tool {tool_name} returned: {content}"
-                                    }
-                                else:
-                                    # First attempt - include proper tool format
-                                    tool_result_message = {
-                                        "role": "tool",
-                                        "tool_call_id": tool_call.id,
-                                        "name": tool_name,
-                                        "content": content
-                                    }
-                                
-                                self.messages.append(tool_result_message)
-                                await self.log_conversation()
-                            except Exception as e:
-                                self.logger.error(f"Error handling tool call {tool_name}: {e}")
-                                all_tools_succeeded = False
-                                
-                                # After first iteration with failed tools, don't include tool_call_id in further messages
-                                if had_tool_failure:
-                                    tool_error_message = {
-                                        "role": "user",
-                                        "content": f"Error using tool {tool_name}: {str(e)}"
-                                    }
-                                else:
-                                    # First attempt - include proper tool format
-                                    tool_error_message = {
-                                        "role": "tool",
-                                        "tool_call_id": tool_call.id,
-                                        "name": tool_name,
-                                        "content": f"Error: {str(e)}"
-                                    }
-                                
-                                self.messages.append(tool_error_message)
-                                await self.log_conversation()
-                        
-                        # Update tool failure flag
-                        if not all_tools_succeeded:
-                            had_tool_failure = True
-                        
-                        # If we have successful results, create a final answer
-                        if have_successful_results:
-                            # Get the most recent successful tool result
-                            successful_result = None
-                            for msg in reversed(self.messages):
-                                if msg.get("role") == "tool" and "Error" not in msg.get("content", ""):
-                                    successful_result = msg.get("content")
-                                    break
-                            
-                            if successful_result:
-                                # Generate a final response with the data we found
-                                final_response = {
-                                    "role": "assistant",
-                                    "content": successful_result
-                                }
-                                self.messages.append(final_response)
-                                self.logger.info(f"Breaking loop with successful result: {successful_result}")
-                                break
-                        
-                        # Continue the conversation if there were tool calls
-                        continue
-                    
-                    # Check if the response contains function calls in text (old format)
-                    if not has_tool_calls:
-                        function_pattern = r'<function=(\w+)\{(.*?)\}>'
-                        function_matches = re.findall(function_pattern, assistant_content)
-                        
-                        # If no function calls are found, add the assistant message and break
-                        if not function_matches:
-                            assistant_message = {
-                                "role": "assistant",
-                                "content": assistant_content,
-                            }
-                            self.messages.append(assistant_message)
-                            await self.log_conversation()
-                            break
-                        
-                        # Add the assistant message with the function call
-                        assistant_message = {
-                            "role": "assistant",
-                            "content": assistant_content,
-                        }
-                        self.messages.append(assistant_message)
-                        await self.log_conversation()
-                        
-                        # Process each function call
-                        all_tools_succeeded = True
-                        for tool_name, tool_args_str in function_matches:
-                            self.logger.info(f"Found function call: {tool_name} with args {tool_args_str}")
-                            
-                            try:
-                                # Parse the JSON arguments - ensure proper formatting
-                                # Wrap in curly braces if not already present
-                                if not tool_args_str.strip().startswith('{'):
-                                    tool_args_str = '{' + tool_args_str + '}'
-                                
-                                tool_args = json.loads(tool_args_str)
-                                
-                                # Find which server has this tool
-                                server_name = self._find_server_for_tool(tool_name)
-                                if not server_name:
-                                    raise ValueError(f"Tool '{tool_name}' not found in any connected server")
-                                
-                                # Call the tool on the appropriate server
-                                self.logger.info(f"Calling tool {tool_name} on server '{server_name}' with args {tool_args}")
-                                session = self.servers[server_name]["session"]
-                                
-                                try:
-                                    result = await session.call_tool(tool_name, tool_args)
-                                    # Format tool result
-                                    content = self._format_tool_result(result.content)
-                                    self.logger.info(f"Tool {tool_name} on server '{server_name}' result received")
-                                except Exception as tool_error:
-                                    self.logger.error(f"Error executing tool {tool_name}: {tool_error}")
-                                    # Handle tool execution error specifically
-                                    content = f"Error: The {tool_name} tool encountered an error. Please try a different approach. Error details: {str(tool_error)}"
-                                    all_tools_succeeded = False
-                                
-                                # Add the tool result as a user message
+                                # Add the tool result as a message
                                 tool_result_message = {
                                     "role": "user",
                                     "content": f"Tool '{tool_name}' returned: {content}"
                                 }
                                 self.messages.append(tool_result_message)
                                 await self.log_conversation()
+                                
+                                # If this was the only function and directly translated to a result, let's just return it
+                                if is_just_function_text and have_successful_results:
+                                    final_message = {
+                                        "role": "assistant",
+                                        "content": content
+                                    }
+                                    self.messages.append(final_message)
+                                    self.logger.info(f"Adding final message with direct tool result: {content[:100] if content else 'Empty'}...")
+                                    return self.messages
+                                
                             except Exception as e:
-                                self.logger.error(f"Error calling tool {tool_name}: {e}")
+                                self.logger.error(f"Error processing function call {tool_name}: {e}")
                                 all_tools_succeeded = False
                                 tool_error_message = {
                                     "role": "user",
@@ -455,9 +569,9 @@ class MCPClient:
                         if not all_tools_succeeded:
                             had_tool_failure = True
                         
-                        # Continue the conversation
+                        # Continue the conversation if we're still going
                         continue
-                
+                    
                 except Exception as e:
                     self.logger.error(f"Error in conversation loop: {e}")
                     # Add error message to conversation
@@ -501,6 +615,14 @@ class MCPClient:
                         last_successful_content = msg.get("content")
                         break
                 
+                # Also check for any research or search results even if not from a tool message
+                if not last_successful_content:
+                    for msg in reversed(self.messages):
+                        content = msg.get("content", "")
+                        if isinstance(content, str) and ("search results" in content.lower() or "research" in content.lower()):
+                            last_successful_content = content
+                            break
+                
                 if last_successful_content:
                     # If we have a successful result, use it instead of generic message
                     self.messages.append({
@@ -508,10 +630,10 @@ class MCPClient:
                         "content": f"{last_successful_content}"
                     })
                 else:
-                    # If no successful results, use generic fallback
+                    # If no successful results at all, use generic fallback
                     self.messages.append({
                         "role": "assistant",
-                        "content": "I've made several attempts to fetch cryptocurrency data but encountered some issues. Please try specifying a different exchange like 'Coinbase' or 'Kraken' in your query, as Binance may be restricted in your region."
+                        "content": "I've made several attempts to retrieve information but encountered some issues. Could you provide more details about what you're looking for?"
                     })
 
             return self.messages
