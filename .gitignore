@@ -4,82 +4,138 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# Virtual Environment
-venv/
 env/
+venv/
 ENV/
-.venv/
-.env/
-.ENV/
-
-# Environment variables
-.env
-.env.local
-.env.development
-.env.test
-.env.production
-
-# Logs
-logs/
-*.log
-npm-debug.log*
-
-# IDE specific files
-.idea/
-.vscode/
-*.swp
-*.swo
-.DS_Store
-
-# Project specific
-conversations/
-
-# Node.js (for MCP server)
-node_modules/
-
-# Testing
-.coverage
-htmlcov/
-.pytest_cache/
+env.bak/
+venv.bak/
+*.egg-info/
+dist/
+build/
+*.egg
+pip-log.txt
+pip-delete-this-directory.txt
 .tox/
-.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
 .hypothesis/
 .pytest_cache/
+cover/
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+# Poetry
+poetry.lock  # Optional: include if you don't want to commit lock file
+.pdm.toml
+.pdm-python
+.pdm-build/
 
-app.log
+# Node.js (for web3-research-mcp and playwright@mcp)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+package-lock.json  # Optional: include if using npm
+.pnpm-lock.yaml
+
+# Environment variables and secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.envrc
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+*.log.*
+npm.log
+yarn.log
+
+# Build and temporary files
+*.tmp
+*.bak
+*.swp
+*.swo
+*.cache
+*.pid
+*.pid.lock
+*.seed
+*.pidfile
+*.coverage
+*.lcov
+*.gcno
+*.gcda
+*.gcov
+*.orig
+*.rej
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project-specific directories
+# Exclude virtual environment if in project root
+.venv/
+
+# Exclude sensitive or large data files
+*.csv
+*.jsonl
+*.bak
+*.backup
+*.dump
+*.sql
+*.sqlite
+*.sqlite3
+*.db
+
+# Exclude test and coverage reports
+coverage/
+reports/
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Exclude Claude logs (from MCP server)
+Claude/logs/
+*.mcp*.log
+
+# Exclude cached models or temporary files from Hugging Face/OpenRouter
+*.model
+*.h5
+*.onnx
+fastembed_cache/
+huggingface_hub/
+
+# Exclude build artifacts from web3-research-mcp
+web3-research-mcp/dist/
+web3-research-mcp/build/
+web3-research-mcp/*.tgz
+
+# Allow specific files if needed
+!.gitignore
+!README.md
+!LICENSE
+!*.md
+!*.toml

@@ -1,79 +1,208 @@
-# AgentZer0 Discord Bot
+# AgentZer0Final
 
-A Discord bot that integrates with cryptocurrency price data and research tools, powered by Groq and OpenRouter LLMs.
-
-## Overview
-
-AgentZer0 is a Discord bot that can:
-
-- Retrieve real-time cryptocurrency prices
-- Research cryptocurrency tokens
-- Answer questions about blockchain projects
-- Process natural language queries using LLM technology
+A Python-based AI agent that uses Model Context Protocol (MCP) to perform web automation and research tasks. The agent leverages LangChain and OpenAI's language models to execute complex tasks like searching for cryptocurrency prices online.
 
 ## Features
 
-- **Real-time Cryptocurrency Data**: Access current prices, market summaries, and historical data
-- **Token Research**: Research cryptocurrency projects using multiple data sources
-- **Multi-LLM Support**: Primary Groq LLM with OpenRouter deepseek-chat as backup
-- **Function Calling**: Automatically selects appropriate tools based on user queries
-- **Conversation Memory**: Maintains context across messages
-
-## Environment Variables
-
-### Required
-
-- `DISCORD_TOKEN`: Your Discord bot token
-- `GROQ_API_KEY`: API key for the Groq LLM service
-
-### Optional
-
-- `GROQ_MODEL`: Specify a Groq model (default: "llama-3-8b-8192")
-- `OPEN_ROUTER_API_KEY`: API key for OpenRouter (backup LLM)
-- `OPEN_ROUTER_MODEL`: Specify an OpenRouter model (default: "deepseek/deepseek-chat-v3-0324:free")
-
-## Setup
-
-1. Clone the repository
-2. Install dependencies:
-   ```bash
-   pip install poetry
-   poetry install
-   ```
-3. Create a `.env` file with your environment variables:
-
-   ```bash
-   # Discord Bot Token
-   DISCORD_TOKEN=your_discord_bot_token_here
-
-   # Primary LLM - Groq
-   GROQ_API_KEY=your_groq_api_key_here
-   GROQ_MODEL=llama-3-8b-8192
-
-   # Backup LLM - OpenRouter
-   OPEN_ROUTER_API_KEY=your_openrouter_api_key_here
-   OPEN_ROUTER_MODEL=deepseek/deepseek-chat-v3-0324:free
-   ```
-
-4. Run the bot:
-   ```bash
-   poetry run python main.py
-   ```
-
-## Usage
-
-- To interact with the bot in Discord, @mention it by name
-- Example: "@AgentZer0 What is the price of Bitcoin?"
-- The bot will only respond to messages where it's explicitly mentioned
-- Commands starting with ! don't need a mention (e.g., "!help")
+- **MCP Integration**: Uses Model Context Protocol for modular tool integration
+- **Web Automation**: Integrated with Playwright for browser automation tasks
+- **AI-Powered**: Utilizes OpenAI-compatible language models via OpenRouter
+- **Async Architecture**: Built with asyncio for efficient concurrent operations
+- **Configurable**: Easy configuration through JSON files
 
 ## Architecture
 
-- **Discord Bot**: Handles Discord API integration
-- **MCP Client**: Manages connections to MCP servers and tools
-- **Language Model**: Processes queries using Groq and OpenRouter LLMs
-- **Tools**: Various tools for cryptocurrency data and research
+The project consists of several key components:
+
+- `main.py`: Main application entry point and agent orchestration
+- `mcp_client.py`: MCP client implementation (currently empty, ready for custom extensions)
+- `config/mcp_servers.json`: Configuration for MCP servers and tools
+- `pyproject.toml`: Poetry project configuration and dependencies
+
+## Dependencies
+
+### Core Dependencies
+
+- **mcp-use[search]**: Model Context Protocol client with search capabilities
+- **langchain[openai]**: LangChain framework with OpenAI integration
+- **python-dotenv**: Environment variable management
+- **playwright**: Web automation (via MCP server)
+
+### Python Version
+
+- Requires Python 3.13+
+
+## Installation
+
+1. **Clone the repository**:
+
+   ```bash
+   git clone <repository-url>
+   cd AgentZer0Final
+   ```
+
+2. **Install Poetry** (if not already installed):
+
+   ```bash
+   curl -sSL https://install.python-poetry.org | python3 -
+   ```
+
+3. **Install dependencies**:
+
+   ```bash
+   poetry install
+   ```
+
+4. **Set up environment variables**:
+   Create a `.env` file in the project root:
+
+   ```env
+   OPENROUTER_API_KEY=your_openrouter_api_key_here
+   ```
+
+5. **Install Playwright** (for web automation):
+   ```bash
+   npx playwright install
+   ```
+
+## Configuration
+
+### MCP Servers
+
+The agent is configured to use Playwright for web automation. The configuration is stored in `config/mcp_servers.json`:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"],
+      "env": {
+        "DISPLAY": ":1"
+      }
+    }
+  }
+}
+```
+
+### Language Model
+
+The agent is configured to use Mistral Small 3.1 24B via OpenRouter. You can modify the model in `main.py`:
+
+```python
+llm = ChatOpenAI(
+    model="mistralai/mistral-small-3.1-24b-instruct:free",
+    openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+    openai_api_base="https://openrouter.ai/api/v1",
+    temperature=0.7,
+)
+```
+
+## Usage
+
+### Running the Agent
+
+```bash
+poetry run python main.py
+```
+
+### Example Tasks
+
+The current implementation demonstrates searching for Bitcoin prices:
+
+```python
+result = await agent.run(
+    "search online for current price of btc.",
+)
+```
+
+### Customizing Tasks
+
+You can modify the task in `main.py` by changing the prompt passed to `agent.run()`:
+
+```python
+result = await agent.run(
+    "Your custom task here",
+)
+```
+
+## Development
+
+### Project Structure
+
+```
+AgentZer0Final/
+├── main.py                 # Main application entry point
+├── mcp_client.py           # Custom MCP client (extensible)
+├── pyproject.toml          # Poetry configuration
+├── poetry.lock             # Dependency lock file
+├── .env                    # Environment variables (create this)
+├── .gitignore              # Git ignore rules
+└── config/
+    └── mcp_servers.json    # MCP server configurations
+```
+
+### Adding New Capabilities
+
+1. **New MCP Servers**: Add server configurations to `config/mcp_servers.json`
+2. **Custom Tools**: Implement custom functionality in `mcp_client.py`
+3. **New Tasks**: Modify the agent prompts in `main.py`
+
+### Agent Configuration
+
+The agent is configured with:
+
+- **Max Steps**: 30 (maximum reasoning/action steps)
+- **Server Manager**: Enabled for automatic MCP server management
+- **Temperature**: 0.7 (creativity vs consistency balance)
+
+## Environment Variables
+
+Required environment variables:
+
+- `OPENROUTER_API_KEY`: Your OpenRouter API key for accessing language models
+- `DISPLAY`: X11 display for Playwright (Linux/WSL environments)
 
 ## License
 
-MIT
+This project is part of the GridZer0/AgentZer0_Discord project suite.
+
+## Author
+
+- **Sturgis Steele** - sturgis.steele@outlook.com
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Missing API Key**: Ensure your `.env` file contains a valid `OPENROUTER_API_KEY`
+2. **Playwright Issues**: Run `npx playwright install` to install browser dependencies
+3. **Python Version**: Ensure you're using Python 3.13 or higher
+4. **Display Issues**: Set `DISPLAY=:1` in your environment for headless operation
+
+### Getting Help
+
+For issues and questions:
+
+- Check the error logs for specific error messages
+- Ensure all dependencies are properly installed
+- Verify your API key has sufficient credits
+- Check that Playwright browsers are installed
+
+## Future Enhancements
+
+Potential areas for development:
+
+- Discord bot integration
+- Additional MCP server integrations
+- Custom tool development
+- Task scheduling and automation
+- Result persistence and logging

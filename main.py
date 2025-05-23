@@ -1,134 +1,88 @@
-# ============================================================================
-# MAIN APPLICATION - CONFIGURED FOR WEB3 RESEARCH MCP
-# ============================================================================
-# This version is specifically designed to work with web3-research-mcp
-
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
 import asyncio
 import os
-import traceback
+import logging
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from mcp_use.client import MCPClient
+from mcp_use.adapters.langchain_adapter import LangChainAdapter
+from contextlib import asynccontextmanager
+import mcp_use
 
-# Import application components
-from client.mcp_client import MCPClient    # Client for MCP server communication
-from config.settings import settings       # Application settings
-from api.routes import router              # API route definitions
-from discord_bot.bot import DiscordBot     # Discord bot integration
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+load_dotenv()
 
+# Enable mcp-use debug mode
+mcp_use.set_debug(2)  # Full verbose output
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan manager"""
-    client = MCPClient()
-    discord_bot = None
-    discord_task = None
-    
+async def manage_client(client):
     try:
-        print("\n===== STARTING AGENTZER0 WITH WEB3-RESEARCH-MCP =====")
-        print(f"Node.js required: Make sure Node.js v16+ is installed")
-        print(f"GROQ_API_KEY set: {'Yes' if os.environ.get('GROQ_API_KEY') else 'No'}")
-        print(f"DISCORD_TOKEN set: {'Yes' if os.environ.get('DISCORD_TOKEN') else 'No'}")
-        print("==================================================\n")
-        
-        # Connect to MCP servers using settings from config
-        print("Connecting to MCP servers...")
-        try:
-            # Initialize all configured MCP servers
-            connected = await client.initialize_servers()
-            if not connected:
-                print("Failed to connect to any MCP servers")
-                raise HTTPException(
-                    status_code=500, detail="Failed to connect to any MCP servers"
-                )
-            print("Successfully connected to MCP servers!")
-        except Exception as e:
-            print(f"Error connecting to MCP server: {e}")
-            traceback.print_exc()
-            raise
-            
-        # Store client in app state for dependency injection in routes
-        app.state.client = client
-        
-        # Initialize Discord bot if token is available
-        discord_token = os.environ.get("DISCORD_TOKEN")
-        if discord_token:
-            print("Initializing Discord bot...")
-            try:
-                # Create Discord bot
-                discord_bot = DiscordBot(client)
-                app.state.discord_bot = discord_bot
-                
-                # Start Discord bot in a separate task
-                print("Starting Discord bot...")
-                discord_task = asyncio.create_task(discord_bot.start(discord_token))
-                
-                # Note: We'll let the bot start in the background and continue with FastAPI startup
-                print("Discord bot starting in background...")
-            except Exception as e:
-                print(f"Error initializing Discord bot: {e}")
-                traceback.print_exc()
-                # Don't raise here - we'll continue even if Discord fails
-                print("Continuing startup without Discord bot")
-        else:
-            print("DISCORD_TOKEN not found. Discord bot not started.")
-            
-        print("Application initialization complete!")
-        yield
-        print("Application shutdown initiated...")
-    except Exception as e:
-        print(f"Error during lifespan: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Error during lifespan") from e
+        yield client
     finally:
-        # Ensure client is properly cleaned up on application shutdown
-        print("Cleaning up resources...")
-        if client:
-            await client.cleanup()
+        for session in client.sessions.values():
+            await session.disconnect()
+        client.sessions.clear()
+
+async def main():
+    # Verify API key
+    if not os.getenv("GROQ_API_KEY"):
+        raise ValueError("GROQ_API_KEY not found in .env")
+
+    # Initialize MCP client
+    async with manage_client(MCPClient.from_config_file("config/mcp_servers.json")) as client:
+        llm = ChatOpenAI(
+            model=os.getenv("GROQ_MODEL"),
+            openai_api_key=os.getenv("GROQ_API_KEY"),
+            openai_api_base=os.getenv("GROQ_BASE_URL"),
+            temperature=0.3
+        )
         
-        # Clean up Discord bot if it was started
-        if discord_bot:
-            await discord_bot.close()
-            
-        # Cancel Discord task if it was created
-        if discord_task and not discord_task.done():
-            discord_task.cancel()
-            try:
-                await discord_task
-            except asyncio.CancelledError:
-                pass
+        # Create adapter and bind tools
+        adapter = LangChainAdapter()
+        tools = await adapter.create_tools(client)
+        tool_names = [tool.name for tool in tools]
+        logger.debug(f"Tools: {tool_names}")
+        tool_names_str = ', '.join(tool_names)
+        system_prompt = (
+            f"You are a helpful assistant with access to cryptocurrency data tools: {tool_names_str}. "
+            "When users ask for cryptocurrency prices or market data, use the appropriate tools to get current information. "
+            "After calling a tool and receiving the result, provide a clear, helpful response to the user based on that result. "
+            "Do not call the same tool multiple times unless the user asks for different information."
+        )
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human", "{input}"),
+            ("placeholder", "{agent_scratchpad}")
+        ])
+          # Create custom LangChain agent
+        agent = create_tool_calling_agent(llm, tools, prompt)
+        executor = AgentExecutor(
+            agent=agent, 
+            tools=tools, 
+            max_iterations=10,  # Reduced to prevent infinite loops
+            verbose=True, 
+            return_intermediate_steps=True,
+            early_stopping_method="generate",  # Generate response even if max iterations reached
+            handle_parsing_errors=True
+        )
+        result = await executor.ainvoke({
+            "input": "price of BTC"
+        })
+        logger.debug(f"Intermediate steps: {result['intermediate_steps']}")
+        
+        # Format and display the final response nicely
+        print("\n" + "="*60)
+        print("🤖 AGENT RESPONSE")
+        print("="*60)
+        print(f"📝 Query: price of BTC")
+        print("-"*60)
+        print(f"💬 Response:")
+        print(f"   {result['output']}")
+        print("="*60 + "\n")
 
-
-def create_application() -> FastAPI:
-    """Create and configure the FastAPI application"""
-    app = FastAPI(
-        title="AgentZer0 Web3 Research API", 
-        lifespan=lifespan,
-        description="API for crypto research with web3-research-mcp tools"
-    )
-    
-    # Add CORS middleware to allow cross-origin requests
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],  # Allows all origins
-        allow_credentials=True,
-        allow_methods=["*"],  # Allows all methods
-        allow_headers=["*"],  # Allows all headers
-    )
-    
-    # Include API routes defined in api/routes.py
-    app.include_router(router)
-    
-    return app
-
-
-# Create the FastAPI application instance
-app = create_application()
-
-
-# Run the application when executed directly
 if __name__ == "__main__":
-    import uvicorn
-    
-    print("Starting AgentZer0 Web3 Research application...")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    asyncio.run(main())

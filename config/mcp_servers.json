@@ -1,0 +1,10 @@
+{
+    "mcpServers": {
+        "crypto": {
+            "command": "python",
+            "args": ["E:/root.s/-SteeleBlockchainTechnology/Projects/GridZer0/AgentZer0_Discord/AgentZer0Final/mcp_servers/crytpo-research/mcp-server-ccxt/src/server.py"]
+        }
+    }
+}
+
+
