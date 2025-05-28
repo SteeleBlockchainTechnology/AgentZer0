@@ -1,19 +1,19 @@
-[project]
-name = "agentzer0final"
+[tool.poetry]
+name = "agentzer0"
 version = "0.1.0"
 description = ""
-authors = [
-    {name = "sturgis",email = "sturgis.steele@outlook.com"}
-]
-readme = "README.md"
-requires-python = ">=3.13,<4.0"
-dependencies = [
-    "mcp-use[search] (>=1.2.13,<2.0.0)",
-    "langchain[openai] (>=0.3.25,<0.4.0)"
-]
+authors = ["sturgis <sturgis.steele@outlook.com>"]
 
+[tool.poetry.dependencies]
+python = "^3.13"
+python-dotenv = "^1.0.0"
+langchain = {extras = ["openai"], version = "^0.3.25"}
+mcp-use = {extras = ["search"], version = "^1.2.13"}
+discord-py = "^2.5.2"
+mcp = "^1.9.1"
+ccxt = "^4.4.85"
+dotenv = "^0.9.9"
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
+requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-package-mode = false

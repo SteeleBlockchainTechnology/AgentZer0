@@ -1,88 +1,159 @@
+"""
+AgentZer0 Discord Bot - Entry Point
+Integrates Discord functionality with Groq LLM and MCP client for cryptocurrency data.
+"""
 import asyncio
 import os
 import logging
+import signal
+import sys
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate
-from mcp_use.client import MCPClient
-from mcp_use.adapters.langchain_adapter import LangChainAdapter
-from contextlib import asynccontextmanager
-import mcp_use
 
-logging.basicConfig(level=logging.DEBUG)
+# Import our modular components
+from client.mcp_client import MCPClientManager
+from client.agent import GroqAgent
+from discord_bot.bot import DiscordBot
+from discord_bot.events import DiscordEvents
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('agentzer0.log')
+    ]
+)
 logger = logging.getLogger(__name__)
-load_dotenv()
 
-# Enable mcp-use debug mode
-mcp_use.set_debug(2)  # Full verbose output
+class AgentZer0Bot:
+    """Main application class that orchestrates all components."""
+    
+    def __init__(self):
+        """Initialize the AgentZer0 bot."""
+        self.mcp_client_manager = None
+        self.agent = None
+        self.discord_bot = None
+        self.discord_events = None
+        self.running = False
+        
+        # Load environment variables
+        load_dotenv()
+        self._validate_environment()
+    
+    def _validate_environment(self):
+        """Validate required environment variables."""
+        required_vars = ["GROQ_API_KEY", "DISCORD_BOT_TOKEN"]
+        missing_vars = [var for var in required_vars if not os.getenv(var)]
+        
+        if missing_vars:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+        
+        logger.info("Environment variables validated successfully")
+    
+    async def initialize(self):
+        """Initialize all components."""
+        try:
+            logger.info("Initializing AgentZer0 Discord Bot...")
+            
+            # Initialize MCP Client Manager
+            config_path = "config/mcp_servers.json"
+            self.mcp_client_manager = MCPClientManager(config_path)
+            logger.info("MCP Client Manager initialized")
+            
+            # Initialize Groq Agent
+            self.agent = GroqAgent(self.mcp_client_manager)
+            await self.agent.setup_tools()
+            logger.info("Groq Agent initialized with tools")
+            
+            # Initialize Discord Bot
+            self.discord_bot = DiscordBot(self.agent)
+            logger.info("Discord Bot initialized")
+            
+            # Initialize Discord Events
+            self.discord_events = DiscordEvents(self.discord_bot, self.agent)
+            logger.info("Discord Events initialized")
+            
+            logger.info("All components initialized successfully!")
+            
+        except Exception as e:
+            logger.error(f"Initialization failed: {e}")
+            raise
+    
+    async def start(self):
+        """Start the bot."""
+        if not self.discord_bot:
+            await self.initialize()
+        
+        self.running = True
+        logger.info("Starting AgentZer0 Discord Bot...")
+        
+        try:
+            await self.discord_bot.start_bot()
+        except Exception as e:
+            logger.error(f"Bot startup failed: {e}")
+            await self.shutdown()
+            raise
+    
+    async def shutdown(self):
+        """Gracefully shutdown the bot."""
+        if not self.running:
+            return
+        
+        logger.info("Shutting down AgentZer0 Discord Bot...")
+        self.running = False
+        
+        try:
+            # Cleanup MCP client first to ensure all connections are properly closed
+            if self.mcp_client_manager:
+                await self.mcp_client_manager.cleanup()
+                logger.info("MCP client cleanup completed")
+            
+            # Close Discord connection
+            if self.discord_bot:
+                await self.discord_bot.close_bot()
+                logger.info("Discord bot connection closed")
+            
+            logger.info("Shutdown completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
 
-@asynccontextmanager
-async def manage_client(client):
-    try:
-        yield client
-    finally:
-        for session in client.sessions.values():
-            await session.disconnect()
-        client.sessions.clear()
+# Global bot instance for signal handling
+bot_instance = None
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals."""
+    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+    if bot_instance:
+        asyncio.create_task(bot_instance.shutdown())
 
 async def main():
-    # Verify API key
-    if not os.getenv("GROQ_API_KEY"):
-        raise ValueError("GROQ_API_KEY not found in .env")
-
-    # Initialize MCP client
-    async with manage_client(MCPClient.from_config_file("config/mcp_servers.json")) as client:
-        llm = ChatOpenAI(
-            model=os.getenv("GROQ_MODEL"),
-            openai_api_key=os.getenv("GROQ_API_KEY"),
-            openai_api_base=os.getenv("GROQ_BASE_URL"),
-            temperature=0.3
-        )
+    """Main entry point."""
+    global bot_instance
+    
+    # Setup signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    try:
+        # Create and start bot
+        bot_instance = AgentZer0Bot()
+        await bot_instance.start()
         
-        # Create adapter and bind tools
-        adapter = LangChainAdapter()
-        tools = await adapter.create_tools(client)
-        tool_names = [tool.name for tool in tools]
-        logger.debug(f"Tools: {tool_names}")
-        tool_names_str = ', '.join(tool_names)
-        system_prompt = (
-            f"You are a helpful assistant with access to cryptocurrency data tools: {tool_names_str}. "
-            "When users ask for cryptocurrency prices or market data, use the appropriate tools to get current information. "
-            "After calling a tool and receiving the result, provide a clear, helpful response to the user based on that result. "
-            "Do not call the same tool multiple times unless the user asks for different information."
-        )
-        
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("human", "{input}"),
-            ("placeholder", "{agent_scratchpad}")
-        ])
-          # Create custom LangChain agent
-        agent = create_tool_calling_agent(llm, tools, prompt)
-        executor = AgentExecutor(
-            agent=agent, 
-            tools=tools, 
-            max_iterations=10,  # Reduced to prevent infinite loops
-            verbose=True, 
-            return_intermediate_steps=True,
-            early_stopping_method="generate",  # Generate response even if max iterations reached
-            handle_parsing_errors=True
-        )
-        result = await executor.ainvoke({
-            "input": "price of BTC"
-        })
-        logger.debug(f"Intermediate steps: {result['intermediate_steps']}")
-        
-        # Format and display the final response nicely
-        print("\n" + "="*60)
-        print("🤖 AGENT RESPONSE")
-        print("="*60)
-        print(f"📝 Query: price of BTC")
-        print("-"*60)
-        print(f"💬 Response:")
-        print(f"   {result['output']}")
-        print("="*60 + "\n")
+    except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+    finally:
+        if bot_instance:
+            await bot_instance.shutdown()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Application terminated by user")
+    except Exception as e:
+        logger.error(f"Application failed: {e}")
+        sys.exit(1)

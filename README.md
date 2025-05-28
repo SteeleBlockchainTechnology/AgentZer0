@@ -1,14 +1,39 @@
-# AgentZer0Final
+# AgentZer0 Discord Bot
 
-A Python-based AI agent that uses Model Context Protocol (MCP) to perform web automation and research tasks. The agent leverages LangChain and OpenAI's language models to execute complex tasks like searching for cryptocurrency prices online.
+A modular Discord bot that integrates Groq LLM with MCP (Model Context Protocol) clients to provide cryptocurrency data and other tools through Discord mentions.
 
-## Features
+## 🏗️ Project Structure
 
-- **MCP Integration**: Uses Model Context Protocol for modular tool integration
-- **Web Automation**: Integrated with Playwright for browser automation tasks
-- **AI-Powered**: Utilizes OpenAI-compatible language models via OpenRouter
-- **Async Architecture**: Built with asyncio for efficient concurrent operations
-- **Configurable**: Easy configuration through JSON files
+```
+AgentZer0/
+├── main.py                 # Entry point - orchestrates all components
+├── test_components.py      # Test script for validating setup
+├── .env.example           # Environment variables template
+├── pyproject.toml         # Project dependencies
+├── config/
+│   └── mcp_servers.json   # MCP server configuration
+├── client/                # MCP and LLM logic
+│   ├── __init__.py
+│   ├── mcp_client.py      # MCP client management
+│   └── agent.py           # Groq LLM agent with tools
+├── discord/               # Discord bot logic
+│   ├── __init__.py
+│   ├── bot.py             # Discord bot configuration
+│   └── events.py          # Event handlers (mentions, responses)
+└── mcp_servers/           # MCP server implementations
+    └── mcp-server-ccxt/   # Cryptocurrency data server
+```
+
+## 🚀 Features
+
+- **Discord Integration**: Responds to @mentions in Discord channels
+- **Groq LLM**: Powered by Groq's fast inference with Llama models
+- **MCP Protocol**: Extensible tool system for cryptocurrency data
+- **Rate Limiting**: Prevents spam with configurable cooldowns
+- **Context Awareness**: Uses recent message history for better responses
+- **Modular Design**: Clean separation of concerns for easy maintenance
+- **Error Handling**: Comprehensive error handling and logging
+- **Graceful Shutdown**: Proper cleanup of connections and resources
 
 ## Architecture
 

@@ -1,0 +1,35 @@
+        "chaingpt": {
+        "command": "node",
+        "args": ["E:/root.s/-SteeleBlockchainTechnology/Projects/GridZer0/AgentZer0_Discord/AgentZer0/mcp_servers/chaingpt-mcp/build/index.js", "start"],
+        "env": {
+            "CHAINGPT_SECRET_KEY": "f3718bca-de10-451d-aa29-4592029b9407"
+        },
+        "toolCallTimeoutMillis": 120000
+        }
+        
+        
+        "websearch": {
+        "command": "npx",
+        "args": [
+            "websearch-mcp"
+        ],
+        "environment": {
+            "API_URL": "http://localhost:3001",
+            "MAX_SEARCH_RESULT": "5"
+        }
+        }
+
+        
+        "crypto": {
+        "command": "python",
+        "args": ["/path/to/crypto_server.py"]
+        }
+
+
+        "local-web-search": {
+        "command": "C:\\Users\\Sturgis\\.bun\\bin\\bun.exe",
+        "args": [
+            "E:\\root.s\\-SteeleBlockchainTechnology\\Projects\\GridZer0\\AgentZer0_Discord\\AgentZer0\\mcp_servers\\local-web-search\\src\\index.ts"
+      ]
+    }
+    
